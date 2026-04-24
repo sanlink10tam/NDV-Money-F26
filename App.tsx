@@ -248,6 +248,12 @@ const App: React.FC = () => {
     localStorage.removeItem('vnv_token');
     sessionStorage.removeItem('vnv_user');
     sessionStorage.removeItem('vnv_token');
+    
+    // Close modals
+    setShowSecurityModal(false);
+    setShowBankInfoModal(false);
+    setShowEditProfileModal(false);
+    
     setCurrentView(AppView.LOGIN);
     if (reason && typeof reason === 'string') {
       setLoginError(reason);
@@ -3163,6 +3169,31 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUpdatePassword = async (oldPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    if (!user) return { success: false, error: "Bạn chưa đăng nhập" };
+    
+    setIsGlobalProcessing(true);
+    try {
+      const response = await authenticatedFetch('/api/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ oldPassword, newPassword })
+      });
+      
+      const data = await response.json();
+      if (response.ok && data.success) {
+        addNotification(user.id, 'Bảo mật tài khoản', 'Mật khẩu đăng nhập của bạn đã được thay đổi thành công.', 'SYSTEM');
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || "Không thể đổi mật khẩu" };
+      }
+    } catch (e: any) {
+      console.error("Lỗi đổi mật khẩu:", e);
+      return { success: false, error: "Lỗi kết nối máy chủ" };
+    } finally {
+      setIsGlobalProcessing(false);
+    }
+  };
+
   const handleUpdateBank = (bankData: { bankName: string; bankAccountNumber: string; bankAccountHolder: string }) => {
     if (user) {
       const updatedUser = { ...user, ...bankData, updatedAt: Date.now() };
@@ -3683,7 +3714,7 @@ const App: React.FC = () => {
             user={user}
             onClose={() => setShowSecurityModal(false)} 
             onLogout={handleLogout} 
-            onUpdatePassword={(newPass) => handleUpdateProfile({ password: newPass })}
+            onUpdatePassword={handleUpdatePassword}
           />
         )}
         {showTermsModal && <TermsModal onClose={() => setShowTermsModal(false)} />}

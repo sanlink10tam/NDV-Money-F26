@@ -2038,6 +2038,76 @@ router.post("/users", async (req: any, res) => {
   }
 });
 
+// New endpoint specifically for password changes with old password verification
+router.post("/change-password", authenticateToken, async (req: any, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) return res.status(401).json({ error: "Không tìm thấy thông tin định danh" });
+    if (!oldPassword || !newPassword) return res.status(400).json({ error: "Vui lòng nhập đầy đủ thông tin" });
+
+    const client = initSupabase();
+    if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
+
+    // 1. Fetch current user with password
+    const { data: user, error: fetchError } = await client
+      .from('users')
+      .select('password')
+      .eq('id', userId)
+      .single();
+
+    if (fetchError || !user) {
+      return res.status(404).json({ error: "Không tìm thấy người dùng" });
+    }
+
+    // 2. Verify old password
+    const storedHash = user.password;
+    let isMatch = false;
+
+    if (typeof storedHash === 'string') {
+      // Standard bcrypt regex (2a/2b/2y, 2-digit cost, 53 salt/hash chars)
+      const isBcryptHash = /^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$/.test(storedHash);
+      
+      if (isBcryptHash) {
+        try {
+          isMatch = await bcrypt.compare(oldPassword, storedHash);
+        } catch (compareError: any) {
+          console.warn(`[PASSWORD_CHANGE] Bcrypt.compare failed for user ${userId}:`, compareError.message);
+          // Failsafe fallback
+          isMatch = oldPassword === storedHash;
+        }
+      } else {
+        // Direct match for plain text
+        isMatch = oldPassword === storedHash;
+      }
+    }
+
+    if (!isMatch) {
+      console.log(`[PASSWORD_CHANGE] Password mismatch for user ${userId}`);
+      return res.status(400).json({ error: "MẬT KHẨU CŨ KHÔNG CHÍNH XÁC" });
+    }
+
+    // 3. Hash new password and update
+    const salt = await bcrypt.genSalt(10);
+    const newHash = await bcrypt.hash(newPassword, salt);
+
+    const { error: updateError } = await client
+      .from('users')
+      .update({ password: newHash })
+      .eq('id', userId);
+
+    if (updateError) {
+      return res.status(500).json({ error: "Lỗi hệ thống khi cập nhật mật khẩu" });
+    }
+
+    res.json({ success: true, message: "Đổi mật khẩu thành công" });
+  } catch (e: any) {
+    console.error("[API ERROR] Error in /change-password:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post("/loans", async (req: any, res) => {
   try {
     const client = initSupabase();

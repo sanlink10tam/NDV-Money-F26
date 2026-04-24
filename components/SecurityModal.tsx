@@ -7,7 +7,7 @@ interface SecurityModalProps {
   user: User | null;
   onClose: () => void;
   onLogout: () => void;
-  onUpdatePassword: (newPass: string) => void;
+  onUpdatePassword: (oldPass: string, newPass: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const SecurityModal: React.FC<SecurityModalProps> = ({ user, onClose, onLogout, onUpdatePassword }) => {
@@ -15,6 +15,7 @@ const SecurityModal: React.FC<SecurityModalProps> = ({ user, onClose, onLogout, 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   
   const [tooltips, setTooltips] = useState<{
     old?: string;
@@ -35,16 +36,15 @@ const SecurityModal: React.FC<SecurityModalProps> = ({ user, onClose, onLogout, 
     if (tooltips.confirm) setTooltips(prev => ({ ...prev, confirm: undefined }));
   }, [confirmPassword]);
 
-  const handleSaveChanges = () => {
+  const handleSaveChanges = async () => {
+    if (isProcessing) return;
+
     let hasError = false;
     const newErrors: typeof tooltips = {};
 
-    // Validate Old Password (Check with current user password)
+    // Validate Old Password
     if (!oldPassword) {
       newErrors.old = "VUI LÒNG NHẬP MẬT KHẨU CŨ";
-      hasError = true;
-    } else if (user && oldPassword !== user.password) {
-      newErrors.old = "MẬT KHẨU CŨ KHÔNG CHÍNH XÁC";
       hasError = true;
     }
 
@@ -68,14 +68,23 @@ const SecurityModal: React.FC<SecurityModalProps> = ({ user, onClose, onLogout, 
       return;
     }
 
-    // Nếu mọi thứ hợp lệ
-    onUpdatePassword(newPassword);
-    setIsSuccess(true);
+    setIsProcessing(true);
+    // Nếu mọi thứ hợp lệ, gọi server để kiểm tra mật khẩu cũ và cập nhật mật khẩu mới
+    const result = await onUpdatePassword(oldPassword, newPassword);
     
-    // Đăng xuất sau 2 giây để người dùng thấy thông báo thành công
-    setTimeout(() => {
-      onLogout();
-    }, 2000);
+    if (result.success) {
+      setIsSuccess(true);
+      // Đăng xuất sau 2 giây để người dùng thấy thông báo thành công
+      setTimeout(() => {
+        onLogout();
+      }, 2000);
+    } else {
+      setTooltips({
+        old: result.error?.includes("CŨ") ? result.error : undefined,
+        new: result.error && !result.error.includes("CŨ") ? result.error : undefined
+      });
+      setIsProcessing(false);
+    }
   };
 
   if (isSuccess) {
@@ -204,9 +213,12 @@ const SecurityModal: React.FC<SecurityModalProps> = ({ user, onClose, onLogout, 
         <div className="p-5 border-t border-white/5 shrink-0 bg-[#111111]">
           <button 
             onClick={handleSaveChanges}
-            className="w-full bg-[#ff8c00] text-black font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all shadow-orange-900/20"
+            disabled={isProcessing}
+            className={`w-full bg-[#ff8c00] text-black font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all shadow-orange-900/20 ${
+              isProcessing ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-500'
+            }`}
           >
-            Lưu thay đổi
+            {isProcessing ? 'Đang xử lý...' : 'Lưu thay đổi'}
           </button>
         </div>
       </div>
