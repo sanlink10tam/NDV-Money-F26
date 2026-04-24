@@ -2346,6 +2346,7 @@ const App: React.FC = () => {
                rankProgress: nextRankProgress,
                totalLimit: nextLimit,
                balance: rankChanged ? (nextLimit - (loanUser.totalLimit - loanUser.balance)) : updatedUser.balance,
+               isFreeUpgrade: rankChanged ? true : updatedUser.isFreeUpgrade,
                fullSettlementCount: newFullSettlementCount,
                spins: newSpins
              };
@@ -2355,7 +2356,8 @@ const App: React.FC = () => {
               rank: nextRank,
               rankProgress: nextRankProgress,
               totalLimit: nextLimit,
-              balance: rankChanged ? (nextLimit - (loanUser.totalLimit - loanUser.balance)) : updatedUser.balance
+              balance: rankChanged ? (nextLimit - (loanUser.totalLimit - loanUser.balance)) : updatedUser.balance,
+              isFreeUpgrade: rankChanged ? true : updatedUser.isFreeUpgrade
             };
           }
         }
@@ -2594,6 +2596,7 @@ const App: React.FC = () => {
             balance: newLimit - (targetUser.totalLimit - targetUser.balance), 
             pendingUpgradeRank: null, 
             rankUpgradeBill: undefined,
+            isFreeUpgrade: false,
             updatedAt: Date.now()
           };
           
@@ -2718,6 +2721,7 @@ const App: React.FC = () => {
       const updatedUser = { 
         ...intermediateUser, 
         balance: newBalance,
+        isFreeUpgrade: updatedData.rank !== undefined && updatedData.rank !== targetUser.rank ? true : intermediateUser.isFreeUpgrade,
         updatedAt: Date.now() 
       };
 
@@ -2955,7 +2959,8 @@ const App: React.FC = () => {
       const lowestRankId = sortedRanks.length > 0 ? sortedRanks[0].id : 'standard';
 
       registeredUsers.forEach(u => {
-        if (u.rank && u.rank !== lowestRankId) {
+        // ID 5444 is an exception: manually upgraded by Admin without fee
+        if (u.rank && u.rank !== lowestRankId && !u.isFreeUpgrade && u.id !== '5444') {
           const rankConf = settings.RANK_CONFIG?.find(r => r.id === u.rank);
           if (rankConf) {
             derivedRankProfit += (rankConf.maxLimit * (upgradePercent / 100));

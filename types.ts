@@ -53,6 +53,7 @@ export interface User {
   vouchers?: Voucher[];
   totalProfit?: number;
   fullSettlementCount?: number;
+  isFreeUpgrade?: boolean;
   updatedAt?: number;
 }
 
