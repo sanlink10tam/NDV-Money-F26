@@ -141,7 +141,7 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
             <Wallet size={60} className="text-[#ff8c00]" />
           </div>
           <div className="relative z-10 space-y-0.5">
-            <p className="text-[8px] font-black text-gray-500 uppercase tracking-[0.2em]">Ngân sách khả dụng hiện tại</p>
+            <p className="text-[8px] font-black text-gray-500 uppercase tracking-[0.2em]">Vốn lưu động hiện tại</p>
             <h2 className="text-2xl font-black text-[#ff8c00] tracking-tighter leading-none">
               {currentBudget.toLocaleString()} <span className="text-xs">đ</span>
             </h2>

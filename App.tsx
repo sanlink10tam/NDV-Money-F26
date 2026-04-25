@@ -386,6 +386,88 @@ const App: React.FC = () => {
   const [storageFull, setStorageFull] = useState(false);
   const [storageUsage, setStorageUsage] = useState('0');
   const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
+
+  // Migration logic for budget
+  useEffect(() => {
+    const shouldMigrate = user?.isAdmin && 
+                        budgetLogs.length > 0 && 
+                        !budgetLogs.some(l => l.note.includes('Vốn ban đầu là 20tr'));
+    
+    if (shouldMigrate && !isGlobalProcessing) {
+      handleResetAndRecalculateBudget();
+    }
+  }, [user?.isAdmin, budgetLogs.length]);
+
+  const handleResetAndRecalculateBudget = async () => {
+    setIsGlobalProcessing(true);
+    try {
+      const initialCapital = 20000000;
+      
+      // Filter logs: Keep ONLY loan-related and rank upgrade logs
+      const keptLogs = budgetLogs.filter(log => 
+        log.type === 'LOAN_DISBURSE' || 
+        log.type === 'LOAN_REPAY' || 
+        (log.type === 'ADD' && log.note.toLowerCase().includes('nâng hạng'))
+      );
+      
+      // Sort by createdAt ascending
+      const sortedLogs = [...keptLogs].sort((a, b) => 
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      
+      // Create new INITIAL log
+      const initialLog: BudgetLog = {
+        id: `BL_INIT_20M`,
+        type: 'INITIAL',
+        amount: initialCapital,
+        balanceAfter: initialCapital,
+        note: 'Vốn ban đầu là 20tr',
+        createdAt: sortedLogs.length > 0 
+          ? new Date(new Date(sortedLogs[0].createdAt).getTime() - 86400000).toISOString() // 1 day before first transaction
+          : new Date().toISOString()
+      };
+      
+      // Recalculate balances
+      let currentBalance = initialCapital;
+      const recalculatedLogs: BudgetLog[] = [initialLog];
+      
+      for (const log of sortedLogs) {
+        if (['ADD', 'LOAN_REPAY', 'INITIAL'].includes(log.type)) {
+          currentBalance += log.amount;
+        } else if (log.type === 'LOAN_DISBURSE') {
+          currentBalance -= log.amount;
+        }
+        
+        recalculatedLogs.push({
+          ...log,
+          balanceAfter: currentBalance
+        });
+      }
+      
+      const finalLogs = recalculatedLogs.reverse();
+      
+      const response = await authenticatedFetch('/api/admin/reset-budget-rewrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          budget: currentBalance,
+          logs: finalLogs
+        })
+      });
+      
+      if (response.ok) {
+        setSystemBudget(currentBalance);
+        setBudgetLogs(finalLogs);
+        localStorage.setItem('ndv_budget', currentBalance.toString());
+        localStorage.setItem('ndv_budget_logs', JSON.stringify(finalLogs));
+        console.log("[BUDGET] Tự động chuẩn hóa vốn 20tr thành công.");
+      }
+    } catch (e) {
+      console.error("[BUDGET] Lỗi tự động migration:", e);
+    } finally {
+      setIsGlobalProcessing(false);
+    }
+  };
   const [dbError, setDbError] = useState<string | null>(null);
   const isProcessingRef = useRef(false);
   const lastActionTimestamp = useRef<number>(0);

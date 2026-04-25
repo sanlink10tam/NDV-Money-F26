@@ -2364,6 +2364,57 @@ router.post("/budget", async (req: any, res) => {
   }
 });
 
+router.post("/admin/reset-budget-rewrite", async (req: any, res) => {
+  try {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Chỉ Admin mới có quyền thực hiện thao tác này" });
+    }
+    const client = initSupabase();
+    if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
+    
+    const { budget, logs } = req.body;
+    
+    // 1. Update SYSTEM_BUDGET
+    const { error: budgetError } = await client.from('config').upsert({ key: 'SYSTEM_BUDGET', value: budget }, { onConflict: 'key' });
+    if (budgetError) throw budgetError;
+    
+    // 2. Clear all budget_logs
+    const { error: deleteError } = await client.from('budget_logs').delete().neq('id', 'KEEP_NONE');
+    if (deleteError) throw deleteError;
+    
+    // 3. Insert new logs in chunks
+    if (logs && logs.length > 0) {
+      // sanitize logs
+      const sanitizedLogs = logs.map((log: any) => ({
+        id: log.id,
+        type: log.type,
+        amount: log.amount,
+        balanceAfter: log.balanceAfter,
+        note: log.note,
+        createdAt: log.createdAt
+      }));
+      
+      for (let i = 0; i < sanitizedLogs.length; i += 50) {
+        const chunk = sanitizedLogs.slice(i, i + 50);
+        const { error: insertError } = await client.from('budget_logs').insert(chunk);
+        if (insertError) throw insertError;
+      }
+    }
+    
+    // Invalidate cache and emit real-time update
+    settingsCache = null;
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("config_updated", [{ key: 'SYSTEM_BUDGET', value: budget }]);
+    }
+    
+    sendSafeJson(res, { success: true });
+  } catch (e: any) {
+    console.error("Lỗi trong /api/admin/reset-budget-rewrite:", e);
+    res.status(500).json({ error: "Lỗi máy chủ nội bộ", message: e.message });
+  }
+});
+
 router.post("/rankProfit", async (req: any, res) => {
   try {
     if (!req.user?.isAdmin) {
