@@ -2859,6 +2859,32 @@ const App: React.FC = () => {
     }
   };
 
+  const handleAdminResetPassword = async (userId: string) => {
+    if (isGlobalProcessing) return;
+    
+    setIsGlobalProcessing(true);
+    try {
+      const response = await authenticatedFetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+
+      if (response.ok) {
+        toast.success("Mật khẩu đã được reset về 111111");
+        addNotification(userId, 'Bảo mật tài khoản', 'Mật khẩu của bạn đã được quản trị viên đặt lại về mặc định (111111). Vui lòng đăng nhập và đổi mật khẩu mới để bảo mật tài khoản.', 'SYSTEM');
+      } else {
+        const errorData = await response.json();
+        toast.error(errorData.error || "Không thể reset mật khẩu");
+      }
+    } catch (e) {
+      console.error("Lỗi reset mật khẩu:", e);
+      toast.error("Đã xảy ra lỗi khi kết nối máy chủ");
+    } finally {
+      setIsGlobalProcessing(false);
+    }
+  };
+
   const handleAdminEditLoan = async (loanId: string, updatedData: Partial<LoanRecord>) => {
     if (isGlobalProcessing) return;
     setIsGlobalProcessing(true);
@@ -3512,7 +3538,7 @@ const App: React.FC = () => {
           onUpdateSettings={handleSaveSettings}
         />
       );
-      case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} isGlobalProcessing={isGlobalProcessing} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onEditUser={handleAdminEditUser} onEditLoan={handleAdminEditLoan} onDeleteUser={handleDeleteUser} onAutoCleanup={handleAutoCleanupUsers} onFetchFullData={fetchFullData} onRefresh={() => fetchFullData(true)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} settings={settings} />;
+      case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} isGlobalProcessing={isGlobalProcessing} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onEditUser={handleAdminEditUser} onResetPassword={handleAdminResetPassword} onEditLoan={handleAdminEditLoan} onDeleteUser={handleDeleteUser} onAutoCleanup={handleAutoCleanupUsers} onFetchFullData={fetchFullData} onRefresh={() => fetchFullData(true)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} settings={settings} />;
       case AppView.ADMIN_BUDGET: 
         return (
           <AdminBudget 

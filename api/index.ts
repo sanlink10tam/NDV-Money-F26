@@ -2511,6 +2511,37 @@ router.delete("/users/:id", async (req: any, res) => {
   }
 });
 
+router.post("/admin/reset-password", authenticateToken, async (req: any, res) => {
+  try {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Chỉ Admin mới có quyền thực hiện thao tác này" });
+    }
+    const client = initSupabase();
+    if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
+    
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: "Thiếu ID người dùng" });
+    }
+    
+    // Hash default password '111111'
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash('111111', salt);
+    
+    const { error } = await client
+      .from('users')
+      .update({ password: hashedPassword })
+      .eq('id', userId);
+      
+    if (error) throw error;
+    
+    sendSafeJson(res, { success: true, message: "Mật khẩu đã được reset về 111111" });
+  } catch (e: any) {
+    console.error("Lỗi trong /api/admin/reset-password:", e);
+    res.status(500).json({ error: "Lỗi máy chủ nội bộ", message: e.message });
+  }
+});
+
 // Helper to filter object keys based on allowed columns
 const sanitizeData = (data: any[], allowedColumns: string[], tableName: string = 'unknown') => {
   if (!Array.isArray(data)) {
