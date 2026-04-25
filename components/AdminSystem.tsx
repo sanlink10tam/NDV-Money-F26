@@ -694,6 +694,8 @@ END $$;`;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS "fullSettlementCount" INTEGER DEFAULT 0;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS "lastPenaltyDate" TEXT;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS "penaltyStreak" INTEGER DEFAULT 0;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS "hasCustomLimit" BOOLEAN DEFAULT false;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS "isFreeUpgrade" BOOLEAN DEFAULT false;
         `;
 
         const execResponse = await authenticatedFetch('/api/execute-sql', {

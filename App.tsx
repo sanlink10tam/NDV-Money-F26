@@ -1449,9 +1449,11 @@ const App: React.FC = () => {
       if (targetUser.isAdmin) return;
       let updated = false;
 
-      // A. Rank Consistency: Ensure user's totalLimit matches the latest RANK_CONFIG for their rank
-      // EXCEPT when the user has a CUSTOM LIMIT manually set by Admin
-      if (settings.RANK_CONFIG && settings.RANK_CONFIG.length > 0 && !targetUser.hasCustomLimit) {
+      // A. Rank Consistency: Preserve Admin custom limit by ONLY auto-setting if explicitly requested (false)
+      // Since hasCustomLimit column is missing in DB, we rely on intentionality.
+      // We only auto-fix if hasCustomLimit is explicitly false.
+      // NOTE: !targetUser.hasCustomLimit is true for undefined, which causes unwanted resets on reload.
+      if (settings.RANK_CONFIG && settings.RANK_CONFIG.length > 0 && targetUser.hasCustomLimit === false) {
         const currentRankDef = settings.RANK_CONFIG.find(r => r.id === targetUser.rank);
         if (currentRankDef && targetUser.totalLimit !== currentRankDef.maxLimit) {
           const oldLimit = targetUser.totalLimit;
@@ -1462,6 +1464,21 @@ const App: React.FC = () => {
             ...targetUser,
             totalLimit: newLimit,
             balance: Math.max(0, (targetUser.balance || 0) + limitDiff),
+            updatedAt: nowTime
+          };
+          newUsers[userIdx] = targetUser;
+          updated = true;
+          usersUpdated = true;
+        }
+      }
+      // If limit is 0, always set default rank limit
+      else if (settings.RANK_CONFIG && settings.RANK_CONFIG.length > 0 && (targetUser.totalLimit === 0 || targetUser.totalLimit === undefined || targetUser.totalLimit === null)) {
+        const currentRankDef = settings.RANK_CONFIG.find(r => r.id === targetUser.rank) || settings.RANK_CONFIG[0];
+        if (currentRankDef) {
+          targetUser = {
+            ...targetUser,
+            totalLimit: currentRankDef.maxLimit,
+            balance: (targetUser.balance || 0) + currentRankDef.maxLimit,
             updatedAt: nowTime
           };
           newUsers[userIdx] = targetUser;
@@ -1525,9 +1542,12 @@ const App: React.FC = () => {
 
         if (currentRank !== targetUser.rank || currentProgress !== targetUser.rankProgress) {
           let newLimit = targetUser.totalLimit;
-          const rankConf = settings.RANK_CONFIG?.find(r => r.id === currentRank);
-          if (rankConf) {
-            newLimit = rankConf.maxLimit;
+          // Only reset limit if it's NOT a custom limit (unless it's a critical error)
+          if (targetUser.hasCustomLimit !== true) {
+            const rankConf = settings.RANK_CONFIG?.find(r => r.id === currentRank);
+            if (rankConf) {
+              newLimit = rankConf.maxLimit;
+            }
           }
 
           newUsers[userIdx] = {

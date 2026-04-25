@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS users (
   "fullSettlementCount" INTEGER DEFAULT 0,
   "lastPenaltyDate" TEXT,
   "penaltyStreak" INTEGER DEFAULT 0,
-  "updatedAt" BIGINT
+  "updatedAt" BIGINT,
+  "hasCustomLimit" BOOLEAN DEFAULT false,
+  "isFreeUpgrade" BOOLEAN DEFAULT false
 );
 
 -- 2. Loans Table
