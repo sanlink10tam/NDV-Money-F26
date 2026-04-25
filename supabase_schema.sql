@@ -157,6 +157,18 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='penaltyStreak') THEN
         ALTER TABLE users ADD COLUMN "penaltyStreak" INTEGER DEFAULT 0;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='hasCustomLimit') THEN
+        ALTER TABLE users ADD COLUMN "hasCustomLimit" BOOLEAN DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='isFreeUpgrade') THEN
+        ALTER TABLE users ADD COLUMN "isFreeUpgrade" BOOLEAN DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='avatar') THEN
+        ALTER TABLE users ADD COLUMN "avatar" TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='bankBin') THEN
+        ALTER TABLE users ADD COLUMN "bankBin" TEXT;
+    END IF;
 
     -- Loans table columns
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='loans' AND column_name='payosOrderCode') THEN

@@ -22,6 +22,21 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
 
+  // Calculate Capital Statistics
+  const stats = logs.reduce((acc, log) => {
+    if (log.type === 'INITIAL') {
+      acc.initial += log.amount;
+    } else if (log.type === 'ADD' || log.type === 'ADJUSTMENT_IN') {
+      acc.added += log.amount;
+    } else if (log.type === 'WITHDRAW' || log.type === 'ADJUSTMENT_OUT') {
+      acc.withdrawn += log.amount;
+    }
+    return acc;
+  }, { initial: 0, added: 0, withdrawn: 0 });
+
+  const netCapital = stats.initial + stats.added - stats.withdrawn;
+  const currentProfit = currentBudget - netCapital;
+
   const totalPages = Math.ceil(logs.length / itemsPerPage);
   const displayedLogs = logs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
@@ -135,16 +150,51 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
       </div>
 
       <div className="flex flex-col gap-4 overflow-hidden flex-1">
+        {/* Thống kê Vốn Gốc */}
+        <div className="grid grid-cols-3 gap-2 shrink-0">
+          <div className="bg-[#111111] border border-white/5 rounded-2xl p-2.5 space-y-1">
+            <p className="text-[7px] font-black text-blue-500 uppercase tracking-widest">Vốn ban đầu</p>
+            <p className="text-sm font-black text-white tracking-tighter">
+              {stats.initial.toLocaleString()} <span className="text-[8px] text-gray-600 font-bold">đ</span>
+            </p>
+          </div>
+          <div className="bg-[#111111] border border-white/5 rounded-2xl p-2.5 space-y-1">
+            <p className="text-[7px] font-black text-green-500 uppercase tracking-widest">Đã thêm vốn</p>
+            <p className="text-sm font-black text-white tracking-tighter">
+              {stats.added.toLocaleString()} <span className="text-[8px] text-gray-600 font-bold">đ</span>
+            </p>
+          </div>
+          <div className="bg-[#111111] border border-white/5 rounded-2xl p-2.5 space-y-1">
+            <p className="text-[7px] font-black text-red-500 uppercase tracking-widest">Đã rút vốn</p>
+            <p className="text-sm font-black text-white tracking-tighter">
+              {stats.withdrawn.toLocaleString()} <span className="text-[8px] text-gray-600 font-bold">đ</span>
+            </p>
+          </div>
+        </div>
+
         {/* Tổng quan ngân sách */}
         <div className="bg-gradient-to-br from-[#111111] to-black border border-white/5 rounded-2xl p-4 relative overflow-hidden shrink-0">
           <div className="absolute top-0 right-0 p-2 opacity-10">
             <Wallet size={60} className="text-[#ff8c00]" />
           </div>
-          <div className="relative z-10 space-y-0.5">
-            <p className="text-[8px] font-black text-gray-500 uppercase tracking-[0.2em]">Vốn lưu động hiện tại</p>
-            <h2 className="text-2xl font-black text-[#ff8c00] tracking-tighter leading-none">
-              {currentBudget.toLocaleString()} <span className="text-xs">đ</span>
-            </h2>
+          <div className="relative z-10 flex justify-between items-end">
+            <div className="space-y-0.5">
+              <p className="text-[8px] font-black text-gray-500 uppercase tracking-[0.2em]">Vốn lưu động hiện tại</p>
+              <h2 className="text-2xl font-black text-[#ff8c00] tracking-tighter leading-none">
+                {currentBudget.toLocaleString()} <span className="text-xs">đ</span>
+              </h2>
+            </div>
+            <div className="text-right space-y-0.5">
+              <p className="text-[7px] font-black text-gray-500 uppercase tracking-widest">Lợi nhuận ròng</p>
+              <h3 className={`text-sm font-black tracking-tighter ${currentProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {currentProfit >= 0 ? '+' : ''}{currentProfit.toLocaleString()} <span className="text-[8px]">đ</span>
+              </h3>
+            </div>
+          </div>
+          
+          <div className="mt-4 pt-3 border-t border-white/5 flex justify-between items-center relative z-10">
+            <p className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">Tổng vốn đối ứng</p>
+            <p className="text-[10px] font-black text-white tracking-tighter">{netCapital.toLocaleString()} đ</p>
           </div>
         </div>
 

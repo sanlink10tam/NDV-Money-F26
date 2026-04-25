@@ -151,6 +151,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
   }, [loans, settledLoans]);
 
   const isBudgetAlarm = useMemo(() => systemBudget <= Number(settings.MIN_SYSTEM_BUDGET || 2000000), [systemBudget, settings.MIN_SYSTEM_BUDGET]);
+  
+  // Capital Statistics
+  const capitalStats = useMemo(() => {
+    return budgetLogs.reduce((acc, log) => {
+      if (log.type === 'INITIAL') {
+        acc.initial += log.amount;
+      } else if (log.type === 'ADD' || log.type === 'ADJUSTMENT_IN') {
+        acc.added += log.amount;
+      } else if (log.type === 'WITHDRAW' || log.type === 'ADJUSTMENT_OUT') {
+        acc.withdrawn += log.amount;
+      }
+      return acc;
+    }, { initial: 0, added: 0, withdrawn: 0 });
+  }, [budgetLogs]);
+
+  const netCapital = capitalStats.initial + capitalStats.added - capitalStats.withdrawn;
+  const currentTotalProfit = systemBudget - netCapital;
 
   const formatLogNote = (note: string) => {
     if (!note) return 'Giao dịch hệ thống';
@@ -254,6 +271,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
           </div>
         </motion.div>
       )}
+
+      {/* Capital Management Stats Row */}
+      <div className="grid grid-cols-4 gap-2 px-1">
+        {[
+          { label: 'VỐN ĐẦU', value: capitalStats.initial, color: 'text-blue-400' },
+          { label: 'THÊM VỐN', value: capitalStats.added, color: 'text-green-400' },
+          { label: 'RÚT VỐN', value: capitalStats.withdrawn, color: 'text-red-400' },
+          { label: 'VỐN RÒNG', value: netCapital, color: 'text-white' }
+        ].map((item, idx) => (
+          <div key={idx} className="bg-[#111111] border border-white/5 rounded-2xl p-2.5 flex flex-col items-center justify-center text-center">
+            <p className="text-[6px] font-black text-gray-600 uppercase tracking-widest leading-none mb-1">{item.label}</p>
+            <p className={`text-[10px] font-black tracking-tighter ${item.color}`}>
+              {item.value.toLocaleString()}
+            </p>
+          </div>
+        ))}
+      </div>
 
       {/* Main Stats Grid */}
       <div className="grid grid-cols-2 gap-4">
