@@ -2347,6 +2347,7 @@ const App: React.FC = () => {
                totalLimit: nextLimit,
                balance: rankChanged ? (nextLimit - (loanUser.totalLimit - loanUser.balance)) : updatedUser.balance,
                isFreeUpgrade: rankChanged ? true : updatedUser.isFreeUpgrade,
+               hasCustomLimit: rankChanged ? false : updatedUser.hasCustomLimit,
                fullSettlementCount: newFullSettlementCount,
                spins: newSpins
              };
@@ -2357,7 +2358,8 @@ const App: React.FC = () => {
               rankProgress: nextRankProgress,
               totalLimit: nextLimit,
               balance: rankChanged ? (nextLimit - (loanUser.totalLimit - loanUser.balance)) : updatedUser.balance,
-              isFreeUpgrade: rankChanged ? true : updatedUser.isFreeUpgrade
+              isFreeUpgrade: rankChanged ? true : updatedUser.isFreeUpgrade,
+              hasCustomLimit: rankChanged ? false : updatedUser.hasCustomLimit
             };
           }
         }
@@ -2597,6 +2599,7 @@ const App: React.FC = () => {
             pendingUpgradeRank: null, 
             rankUpgradeBill: undefined,
             isFreeUpgrade: false,
+            hasCustomLimit: false,
             updatedAt: Date.now()
           };
           
@@ -2722,6 +2725,7 @@ const App: React.FC = () => {
         ...intermediateUser, 
         balance: newBalance,
         isFreeUpgrade: updatedData.rank !== undefined && updatedData.rank !== targetUser.rank ? true : intermediateUser.isFreeUpgrade,
+        hasCustomLimit: updatedData.totalLimit !== undefined ? true : intermediateUser.hasCustomLimit,
         updatedAt: Date.now() 
       };
 

@@ -248,7 +248,10 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
 
   const userAvailableBalance = user?.balance || 0;
   const actualMaxAllowed = Math.min(userAvailableBalance, systemBudget);
-  const totalLimitCap = Number(settings.MAX_SINGLE_LOAN_AMOUNT || 10000000);
+  
+  // Custom Limit Exception: If Admin manually edited totalLimit, use user's totalLimit as the cap instead of global settings
+  const singleLoanLimit = user?.hasCustomLimit ? (user.totalLimit || 1000000000) : Number(settings.MAX_SINGLE_LOAN_AMOUNT || 10000000);
+  const cycleLimit = user?.hasCustomLimit ? (user.totalLimit || 1000000000) : Number(settings.MAX_LOAN_PER_CYCLE || 10000000);
 
   const isSystemOutOfCapital = systemBudget <= 0 || systemBudget < Number(settings.MIN_SYSTEM_BUDGET || 1000000);
 
@@ -346,7 +349,7 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
 
     const today = new Date();
     
-    const isLimitReached = currentCycleTotal >= Number(settings.MAX_LOAN_PER_CYCLE || 10000000);
+    const isLimitReached = currentCycleTotal >= cycleLimit;
 
     const hasOverdue = loans.some(l => {
       if ((l.status !== 'ĐANG NỢ' && l.status !== 'CHỜ TẤT TOÁN') || !l.date || typeof l.date !== 'string') return false;
@@ -387,7 +390,7 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
             {hasOverdue 
               ? 'NỢ XẤU - KHÓA' 
               : isLimitReached
-                ? `ĐẠT GIỚI HẠN ${Math.round(Number(settings.MAX_LOAN_PER_CYCLE || 10000000)/1000000)}TR/THÁNG`
+                ? `ĐẠT GIỚI HẠN ${Math.round(cycleLimit/1000000)}TR/THÁNG`
                 : isProcessingLoan 
                   ? 'CHỜ DUYỆT KHOẢN TRƯỚC' 
                   : isSystemOutOfCapital 
@@ -412,7 +415,7 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
                 <div className="flex gap-3">
                   <div className="w-6 h-6 bg-[#ff8c00] rounded-full flex items-center justify-center shrink-0 font-black text-[12px] text-black">2</div>
                   <p className="text-[12px] font-bold text-gray-300 leading-relaxed">
-                    <span className="text-[#ff8c00]">Hạn mức chu kỳ:</span> Tổng dư nợ tối đa không vượt quá {Number(settings.MAX_LOAN_PER_CYCLE || 10000000).toLocaleString()} VNĐ trong chu kỳ 30 ngày.
+                    <span className="text-[#ff8c00]">Hạn mức chu kỳ:</span> Tổng dư nợ tối đa không vượt quá {cycleLimit.toLocaleString()} VNĐ trong chu kỳ 30 ngày.
                   </p>
                 </div>
                 <div className="flex gap-3">
@@ -472,7 +475,7 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
           
           {isLimitReached && !hasOverdue && (
             <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest text-center px-1">
-              Đã đạt giới hạn vay {Number(settings.MAX_LOAN_PER_CYCLE || 10000000).toLocaleString()} đ trong chu kỳ này
+              Đã đạt giới hạn vay {cycleLimit.toLocaleString()} đ trong chu kỳ này
             </p>
           )}
 
@@ -702,7 +705,7 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
                 <input
                   type="range"
                   min={Number(settings.MIN_LOAN_AMOUNT || 1000000)}
-                  max={Math.max(Number(settings.MIN_LOAN_AMOUNT || 1000000), Math.min(Number(settings.MAX_LOAN_PER_CYCLE || 10000000) - currentCycleTotal, actualMaxAllowed))}
+                  max={Math.max(Number(settings.MIN_LOAN_AMOUNT || 1000000), Math.min(cycleLimit - currentCycleTotal, actualMaxAllowed, singleLoanLimit))}
                   step="1000000"
                   value={selectedAmount}
                   onChange={handleSliderChange}
@@ -715,10 +718,10 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <span className={`text-[9px] font-black uppercase tracking-widest ${isLimitedByBudget ? 'text-red-500' : 'text-orange-500/50'}`}>
-                      {isLimitedByBudget ? 'Ngân sách hệ thống' : 'Hạn mức khả dụng'}
+                      {isLimitedByBudget ? 'Ngân sách hệ thống' : (user?.hasCustomLimit ? 'Hạn mức riêng' : 'Hạn mức khả dụng')}
                     </span>
                     <span className={`text-[11px] font-black ${isLimitedByBudget ? 'text-red-500' : 'text-[#ff8c00]'}`}>
-                      {Math.min(Number(settings.MAX_LOAN_PER_CYCLE || 10000000) - currentCycleTotal, actualMaxAllowed).toLocaleString()} đ
+                      {Math.min(cycleLimit - currentCycleTotal, actualMaxAllowed, singleLoanLimit).toLocaleString()} đ
                     </span>
                   </div>
                 </div>

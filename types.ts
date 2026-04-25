@@ -54,6 +54,7 @@ export interface User {
   totalProfit?: number;
   fullSettlementCount?: number;
   isFreeUpgrade?: boolean;
+  hasCustomLimit?: boolean;
   updatedAt?: number;
 }
 
