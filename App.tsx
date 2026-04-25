@@ -1450,7 +1450,8 @@ const App: React.FC = () => {
       let updated = false;
 
       // A. Rank Consistency: Ensure user's totalLimit matches the latest RANK_CONFIG for their rank
-      if (settings.RANK_CONFIG && settings.RANK_CONFIG.length > 0) {
+      // EXCEPT when the user has a CUSTOM LIMIT manually set by Admin
+      if (settings.RANK_CONFIG && settings.RANK_CONFIG.length > 0 && !targetUser.hasCustomLimit) {
         const currentRankDef = settings.RANK_CONFIG.find(r => r.id === targetUser.rank);
         if (currentRankDef && targetUser.totalLimit !== currentRankDef.maxLimit) {
           const oldLimit = targetUser.totalLimit;

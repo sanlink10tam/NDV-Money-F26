@@ -1743,6 +1743,20 @@ router.get("/data", async (req, res) => {
         const { data, error } = await query;
         if (error) {
           console.error(`[API] fetchUsers error (columns: ${columns}):`, error.message);
+          
+          // Re-attempt without missing columns
+          if (error.code === 'PGRST204' || error.code === '42703' || (error.message && error.message.includes('column') && error.message.includes('does not exist'))) {
+             console.warn("[API] Retrying users fetch without potentially missing columns...");
+             const commonNewColumns = ['payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt', 'idNumber', 'refZalo', 'spins', 'vouchers', 'totalProfit', 'fullSettlementCount', 'lastPenaltyDate', 'penaltyStreak', 'hasCustomLimit', 'isFreeUpgrade'];
+             
+             if (columns !== '*') {
+               const saferColumns = columnsList.filter(c => !commonNewColumns.some(nc => error.message.includes(nc))).join(',');
+               console.log(`[API] Retrying with safer columns: ${saferColumns}`);
+               const { data: retryData, error: retryError } = await client.from('users').select(saferColumns).range(from, to);
+               if (!retryError) return retryData || [];
+             }
+          }
+
           // If custom columns fail, fallback to * for admin
           if (isAdmin) {
              console.warn("[API] Falling back to select('*') for users fetch...");
@@ -1970,16 +1984,28 @@ router.post("/users", async (req: any, res) => {
       console.error("[API ERROR] Supabase upsert failed for users:", JSON.stringify(error));
       
       // If it's a missing column error, try again without the new columns
-      if (error.code === '42703' || (error.message && (error.message.includes('column') && error.message.includes('does not exist')))) {
+      if (error.code === 'PGRST204' || error.code === '42703' || (error.message && (error.message.includes('column') && error.message.includes('does not exist')))) {
         console.warn("[API] Retrying users upsert without potentially missing columns...");
         // Identify common new columns that might be missing
-        const commonNewColumns = ['payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt', 'idNumber', 'refZalo', 'spins', 'vouchers', 'totalProfit', 'fullSettlementCount'];
-        const fallbackColumns = USER_WRITE_COLUMNS.filter(c => !commonNewColumns.some(nc => error.message.includes(nc)));
+        const commonNewColumns = ['idNumber', 'refZalo', 'spins', 'vouchers', 'totalProfit', 'fullSettlementCount', 'lastPenaltyDate', 'penaltyStreak', 'hasCustomLimit', 'isFreeUpgrade', 'payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt'];
         
-        // If we couldn't identify specific columns from the error message, just remove all common new ones
-        const saferColumns = fallbackColumns.length === USER_WRITE_COLUMNS.length 
-          ? USER_WRITE_COLUMNS.filter(c => !commonNewColumns.includes(c))
-          : fallbackColumns;
+        let saferColumns = USER_WRITE_COLUMNS;
+        
+        // If the error message mentions a specific column, remove it
+        const missingColumnMatch = error.message.match(/column ['"]?([^'"]+)['"]? does not exist/i) || error.message.match(/find the ['"]?([^'"]+)['"]? column/i);
+        if (missingColumnMatch && missingColumnMatch[1]) {
+           let missingCol = missingColumnMatch[1];
+           // Handle 'users.columnName' format
+           if (missingCol.includes('.')) {
+             missingCol = missingCol.split('.').pop() || missingCol;
+           }
+           console.log(`[API] Removing missing column found in error msg: ${missingCol}`);
+           saferColumns = saferColumns.filter(c => c !== missingCol.trim());
+        } else {
+           // Otherwise remove all potentially new columns
+           console.log("[API] Removing all potentially new columns for safety");
+           saferColumns = USER_WRITE_COLUMNS.filter(c => !commonNewColumns.includes(c));
+        }
           
         const saferUsers = sanitizeData(processedUsers, saferColumns);
         const { error: retryError } = await client.from('users').upsert(saferUsers, { onConflict: 'id' });
@@ -2579,7 +2605,8 @@ const USER_COLUMNS = [
   'refZalo', 'relationship', 'lastLoanSeq', 'bankName', 'bankBin', 
   'bankAccountNumber', 'bankAccountHolder', 'hasJoinedZalo', 
   'payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt', 
-  'spins', 'vouchers', 'totalProfit', 'fullSettlementCount', 'lastPenaltyDate', 'penaltyStreak', 'updatedAt'
+  'spins', 'vouchers', 'totalProfit', 'fullSettlementCount', 'lastPenaltyDate', 'penaltyStreak', 'updatedAt',
+  'hasCustomLimit', 'isFreeUpgrade'
 ];
 
 const USER_WRITE_COLUMNS = [...USER_COLUMNS, 'password'];
@@ -2718,7 +2745,27 @@ router.post("/sync", async (req: any, res) => {
         const { error } = await client.from('users').upsert(sanitizedUsers, { onConflict: 'id' });
         if (error) {
           console.error("[SYNC] Users upsert failed:", JSON.stringify(error));
-          throw error;
+          // Retry for missing columns
+          if (error.code === 'PGRST204' || error.code === '42703' || error.message?.includes('column')) {
+            const commonNewColumns = ['idNumber', 'refZalo', 'spins', 'vouchers', 'totalProfit', 'fullSettlementCount', 'lastPenaltyDate', 'penaltyStreak', 'hasCustomLimit', 'isFreeUpgrade', 'payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt'];
+            
+            let saferColumns = USER_WRITE_COLUMNS;
+            const missingColumnMatch = error.message.match(/column ['"]?([^'"]+)['"]? does not exist/i) || error.message.match(/find the ['"]?([^'"]+)['"]? column/i);
+            
+            if (missingColumnMatch && missingColumnMatch[1]) {
+               let missingCol = missingColumnMatch[1];
+               if (missingCol.includes('.')) missingCol = missingCol.split('.').pop() || missingCol;
+               saferColumns = USER_WRITE_COLUMNS.filter(c => c !== missingCol.trim());
+            } else {
+               saferColumns = USER_WRITE_COLUMNS.filter(c => !commonNewColumns.includes(c));
+            }
+            
+            const saferUsers = sanitizeData(processedUsers, saferColumns);
+            const { error: retryError } = await client.from('users').upsert(saferUsers, { onConflict: 'id' });
+            if (retryError) throw retryError;
+          } else {
+            throw error;
+          }
         }
       }
     }
@@ -2731,7 +2778,7 @@ router.post("/sync", async (req: any, res) => {
         if (error) {
           console.error("[SYNC] Loans upsert failed:", JSON.stringify(error));
           // If it's a missing column error, try again without the new columns
-          if (error.code === '42703' || (error.message && (error.message.includes('column "principalPaymentCount" does not exist') || error.message.includes('column "partialAmount" does not exist')))) {
+          if (error.code === 'PGRST204' || error.code === '42703' || (error.message && (error.message.includes('column "principalPaymentCount" does not exist') || error.message.includes('column "partialAmount" does not exist')))) {
             console.warn("[SYNC] Retrying loans upsert without new columns...");
             const fallbackColumns = LOAN_COLUMNS.filter(c => c !== 'principalPaymentCount' && c !== 'partialAmount');
             const saferLoans = sanitizeData(loans, fallbackColumns);

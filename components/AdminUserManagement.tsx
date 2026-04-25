@@ -81,7 +81,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
   // Manual Edit States
   const [editingUser, setEditingUser] = useState<UserType | null>(null);
   const [editingLoan, setEditingLoan] = useState<LoanRecord | null>(null);
-  const [editUserForm, setEditUserForm] = useState({ rank: '', totalLimit: 0 });
+  const [editUserForm, setEditUserForm] = useState({ rank: '', totalLimit: 0, hasCustomLimit: false });
   const [editLoanForm, setEditLoanForm] = useState({ status: '', amount: 0, date: '', fine: 0 });
 
   // Manual Edit Helpers
@@ -512,7 +512,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
                             onClick={(e) => {
                               e.stopPropagation();
                               setEditingUser(u);
-                              setEditUserForm({ rank: u.rank, totalLimit: u.totalLimit });
+                              setEditUserForm({ rank: u.rank, totalLimit: u.totalLimit, hasCustomLimit: u.hasCustomLimit || false });
                             }}
                             className="w-8 h-8 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-center justify-center text-blue-500 hover:bg-blue-500/20 transition-all"
                             title="Sửa thông tin"
@@ -1260,9 +1260,10 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
                     onChange={(e) => {
                       const newRank = e.target.value;
                       const rankConf = settings.RANK_CONFIG?.find(r => r.id === newRank);
-                      const updates: Partial<typeof editUserForm> = { rank: newRank };
+                      const updates: any = { rank: newRank };
                       if (rankConf) {
                         updates.totalLimit = rankConf.maxLimit;
+                        updates.hasCustomLimit = false; // Reset to rank default
                       }
                       setEditUserForm({ ...editUserForm, ...updates });
                     }}
@@ -1281,7 +1282,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
                     type="text"
                     inputMode="numeric"
                     value={formatNumberWithDots(editUserForm.totalLimit)}
-                    onChange={(e) => setEditUserForm({ ...editUserForm, totalLimit: parseNumberFromDots(e.target.value) })}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, totalLimit: parseNumberFromDots(e.target.value), hasCustomLimit: true })}
                     className="w-full bg-black border border-white/5 rounded-xl py-3 px-4 text-xs font-bold text-white focus:outline-none focus:border-blue-500 transition-all"
                   />
                 </div>

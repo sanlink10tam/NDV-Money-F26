@@ -180,7 +180,9 @@ CREATE TABLE IF NOT EXISTS users (
   "lastPenaltyDate" TEXT,
   "penaltyStreak" INTEGER DEFAULT 0,
   "avatar" TEXT,
-  "updatedAt" BIGINT
+  "updatedAt" BIGINT,
+  "hasCustomLimit" BOOLEAN DEFAULT false,
+  "isFreeUpgrade" BOOLEAN DEFAULT false
 );
 
 -- 2. Loans Table
