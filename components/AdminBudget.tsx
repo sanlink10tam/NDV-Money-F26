@@ -1,23 +1,25 @@
 
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { TrendingUp, Wallet, AlertTriangle, ChevronLeft, Save, X, Check, Plus, Minus, History, Calendar, ArrowUpRight, ArrowDownLeft, Info, ChevronRight } from 'lucide-react';
+import { TrendingUp, Wallet, AlertTriangle, ChevronLeft, Save, X, Check, Plus, Minus, History, Calendar, ArrowUpRight, ArrowDownLeft, Info, ChevronRight, Trash2 } from 'lucide-react';
 import { BudgetLog, AppSettings } from '../types';
 
 interface AdminBudgetProps {
   currentBudget: number;
   logs: BudgetLog[];
   onUpdateBudget: (type: BudgetLog['type'], amount: number, note: string) => Promise<void>;
+  onDeleteLog: (logId: string) => Promise<void>;
   onBack: () => void;
   settings: AppSettings;
 }
 
-const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdateBudget, onBack, settings }) => {
-  const [activeTab, setActiveTab] = useState<'ADD' | 'WITHDRAW'>('ADD');
+const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdateBudget, onDeleteLog, onBack, settings }) => {
+  const [activeTab, setActiveTab] = useState<'ADD' | 'WITHDRAW' | 'INITIAL'>('ADD');
   const [inputValue, setInputValue] = useState('');
   const [numericValue, setNumericValue] = useState(0);
   const [note, setNote] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
+  const [logToDelete, setLogToDelete] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
@@ -84,7 +86,12 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
   const confirmAction = async () => {
     setIsProcessing(true);
     try {
-      const actionNote = note || (activeTab === 'ADD' ? 'Thêm ngân sách' : 'Rút ngân sách');
+      const actionLabels: Record<string, string> = {
+        'ADD': 'Thêm vốn',
+        'WITHDRAW': 'Rút vốn',
+        'INITIAL': 'Vốn ban đầu'
+      };
+      const actionNote = note || actionLabels[activeTab];
       await onUpdateBudget(activeTab, numericValue, actionNote);
       toast.success("Cập nhật ngân sách thành công");
       setInputValue('');
@@ -93,6 +100,19 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
       setShowConfirm(false);
     } catch (e) {
       toast.error("Đã xảy ra lỗi khi cập nhật");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const confirmDeleteLog = async () => {
+    if (!logToDelete) return;
+    setIsProcessing(true);
+    try {
+      await onDeleteLog(logToDelete);
+      setLogToDelete(null);
+    } catch (e) {
+      toast.error("Không thể xóa log này");
     } finally {
       setIsProcessing(false);
     }
@@ -202,7 +222,8 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
         <div className="bg-[#111111] border border-white/5 rounded-2xl p-1 flex gap-1 shrink-0">
           {[
             { id: 'ADD', label: 'THÊM VỐN', icon: <Plus size={12} /> },
-            { id: 'WITHDRAW', label: 'RÚT VỐN', icon: <Minus size={12} /> }
+            { id: 'WITHDRAW', label: 'RÚT VỐN', icon: <Minus size={12} /> },
+            { id: 'INITIAL', label: 'VỐN BAN ĐẦU', icon: <Wallet size={12} /> }
           ].map(tab => (
             <button
               key={tab.id}
@@ -298,12 +319,20 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
                         <p className="text-[9px] font-bold text-white tracking-tight line-clamp-1">{formatLogNote(log.note)}</p>
                       </div>
                     </div>
-                    <div className="text-right space-y-0">
-                      <p className={`text-[10px] font-black tracking-tighter ${['ADD', 'LOAN_REPAY', 'INITIAL', 'ADJUSTMENT_IN'].includes(log.type) ? 'text-green-400' : 'text-red-400'}`}>
-                        {['ADD', 'LOAN_REPAY', 'INITIAL', 'ADJUSTMENT_IN'].includes(log.type) ? '+' : '-'}
-                        {log.amount.toLocaleString()} đ
-                      </p>
-                      <p className="text-[7px] font-bold text-gray-600 uppercase tracking-tighter">Dư: {log.balanceAfter.toLocaleString()} đ</p>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right space-y-0">
+                        <p className={`text-[10px] font-black tracking-tighter ${['ADD', 'LOAN_REPAY', 'INITIAL', 'ADJUSTMENT_IN'].includes(log.type) ? 'text-green-400' : 'text-red-400'}`}>
+                          {['ADD', 'LOAN_REPAY', 'INITIAL', 'ADJUSTMENT_IN'].includes(log.type) ? '+' : '-'}
+                          {log.amount.toLocaleString()} đ
+                        </p>
+                        <p className="text-[7px] font-bold text-gray-600 uppercase tracking-tighter">Dư: {log.balanceAfter.toLocaleString()} đ</p>
+                      </div>
+                      <button 
+                        onClick={() => setLogToDelete(log.id)}
+                        className="w-7 h-7 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center justify-center text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/20"
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -350,7 +379,10 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
               <div className="space-y-1.5">
                 <h3 className="text-lg font-black text-white uppercase tracking-tighter">XÁC NHẬN GIAO DỊCH</h3>
                 <p className="text-[9px] font-bold text-gray-400 uppercase leading-relaxed px-3">
-                  Bạn có chắc chắn muốn {activeTab === 'ADD' ? 'thêm' : 'rút'} <span className="text-white font-black">{numericValue.toLocaleString()} đ</span> {activeTab === 'ADD' ? 'vào ngân sách' : 'khỏi ngân sách'}?
+                  {activeTab === 'INITIAL' 
+                    ? `Bạn có muốn thiết lập lại TỔNG VỐN ban đầu là ${numericValue.toLocaleString()} đ? (Hệ thống sẽ tự động trừ đi các khoản đang cho vay để tính vốn lưu động)`
+                    : `Bạn có chắc chắn muốn ${activeTab === 'ADD' ? 'thêm' : 'rút'} ${numericValue.toLocaleString()} đ ${activeTab === 'ADD' ? 'vào ngân sách' : 'khỏi ngân sách'}?`
+                  }
                 </p>
               </div>
             </div>
@@ -369,6 +401,42 @@ const AdminBudget: React.FC<AdminBudgetProps> = ({ currentBudget, logs, onUpdate
                  className="flex-1 py-3.5 bg-[#ff8c00] rounded-xl text-[9px] font-black text-black uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-900/20"
                >
                  {isProcessing ? <History className="animate-spin" size={12} /> : <Check size={12} />} XÁC NHẬN
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal xác nhận xóa log */}
+      {logToDelete && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-300">
+          <div className="bg-[#111111] border border-red-600/20 w-full max-w-sm rounded-[2.5rem] p-8 space-y-8 relative shadow-2xl overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-red-600"></div>
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-16 h-16 bg-red-600/10 rounded-full flex items-center justify-center text-red-600 shadow-[0_0_20px_rgba(220,38,38,0.2)]">
+                 <AlertTriangle size={32} />
+              </div>
+              <div className="space-y-3">
+                <h3 className="text-xl font-black text-white uppercase tracking-tighter">XÓA LOG THU/CHI?</h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase leading-relaxed px-4">
+                  Bạn có chắc chắn muốn xóa vĩnh viễn bản ghi thu chi này? Thao tác này <span className="text-red-500 font-black">KHÔNG THỂ HOÀN TÁC</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+               <button 
+                 onClick={() => setLogToDelete(null)}
+                 disabled={isProcessing}
+                 className="flex-1 py-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-gray-500 uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2"
+               >
+                 <X size={14} /> HỦY BỎ
+               </button>
+               <button 
+                 onClick={confirmDeleteLog}
+                 disabled={isProcessing}
+                 className="flex-1 py-4 bg-red-600 rounded-2xl text-[10px] font-black text-white uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/40"
+               >
+                 {isProcessing ? <History size={14} className="animate-spin" /> : <Check size={14} />} ĐỒNG Ý XÓA
                </button>
             </div>
           </div>

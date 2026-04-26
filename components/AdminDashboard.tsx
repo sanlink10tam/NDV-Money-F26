@@ -28,7 +28,8 @@ import {
   History,
   ArrowRight,
   Bell,
-  Power
+  Power,
+  Trash2
 } from 'lucide-react';
 import * as d3 from 'd3';
 
@@ -50,6 +51,7 @@ interface AdminDashboardProps {
   onNavigateToUsers: () => void;
   onNavigateToBudget: () => void;
   onLogout: () => void;
+  onDeleteLog?: (logId: string) => void;
   onRefresh?: () => void;
   authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response>;
   settings: AppSettings;
@@ -73,6 +75,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
   onNavigateToUsers,
   onNavigateToBudget,
   onLogout,
+  onDeleteLog,
   onRefresh,
   authenticatedFetch,
   settings,
@@ -138,9 +141,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
   
   // Financial Statistics
   const { totalDisbursed, totalCollected, activeDebt, collectionRate } = useMemo(() => {
+    const activeStatuses = ['ĐANG NỢ', 'QUÁ HẠN', 'CHỜ TẤT TOÁN', 'ĐANG ĐỐI SOÁT'];
     const disbursed = loans.filter(l => l.status !== 'BỊ TỪ CHỐI' && l.status !== 'CHỜ DUYỆT').reduce((acc, curr) => acc + curr.amount, 0);
     const collected = settledLoans.reduce((acc, curr) => acc + curr.amount, 0);
-    const debt = disbursed - collected;
+    const debt = loans
+      ? loans.filter((l: any) => activeStatuses.includes(l.status)).reduce((sum: number, l: any) => sum + Number(l.amount || 0), 0)
+      : 0;
     const rate = disbursed > 0 ? (collected / disbursed) * 100 : 0;
     return {
       totalDisbursed: disbursed,
@@ -167,7 +173,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
   }, [budgetLogs]);
 
   const netCapital = capitalStats.initial + capitalStats.added - capitalStats.withdrawn;
-  const currentTotalProfit = systemBudget - netCapital;
+  const currentTotalValue = systemBudget + activeDebt;
+  const currentTotalProfit = currentTotalValue - netCapital;
 
   const formatLogNote = (note: string) => {
     if (!note) return 'Giao dịch hệ thống';
@@ -513,7 +520,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
               </div>
               <div className="space-y-2">
                 {recentLogs.map((log) => (
-                  <div key={log.id} className="bg-black/20 border border-white/5 rounded-xl p-3 flex items-center justify-between">
+                  <div key={log.id} className="bg-black/20 border border-white/5 rounded-xl p-3 flex items-center justify-between group/item">
                     <div className="flex items-center gap-3">
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
                         log.type === 'ADD' || log.type === 'LOAN_REPAY' || log.type === 'INITIAL' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'
@@ -527,11 +534,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
                         </p>
                       </div>
                     </div>
-                    <p className={`text-[10px] font-black ${
-                      log.type === 'ADD' || log.type === 'LOAN_REPAY' || log.type === 'INITIAL' ? 'text-green-500' : 'text-red-500'
-                    }`}>
-                      {log.type === 'ADD' || log.type === 'LOAN_REPAY' || log.type === 'INITIAL' ? '+' : '-'}{log.amount.toLocaleString()}
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <p className={`text-[10px] font-black ${
+                        log.type === 'ADD' || log.type === 'LOAN_REPAY' || log.type === 'INITIAL' ? 'text-green-500' : 'text-red-500'
+                      }`}>
+                        {log.type === 'ADD' || log.type === 'LOAN_REPAY' || log.type === 'INITIAL' ? '+' : '-'}{log.amount.toLocaleString()}
+                      </p>
+                      {onDeleteLog && (
+                        <button 
+                          onClick={() => {
+                            if (window.confirm('Bạn có chắc muốn xóa bản ghi này? Hệ thống sẽ hoàn lại số dư tương ứng.')) {
+                              onDeleteLog(log.id);
+                            }
+                          }}
+                          className="w-7 h-7 bg-red-500/10 text-red-500 rounded-lg flex items-center justify-center opacity-0 group-hover/item:opacity-100 transition-opacity active:scale-90"
+                          title="Xóa log"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

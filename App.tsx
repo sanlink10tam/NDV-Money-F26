@@ -386,88 +386,6 @@ const App: React.FC = () => {
   const [storageFull, setStorageFull] = useState(false);
   const [storageUsage, setStorageUsage] = useState('0');
   const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
-
-  // Migration logic for budget
-  useEffect(() => {
-    const shouldMigrate = user?.isAdmin && 
-                        budgetLogs.length > 0 && 
-                        !budgetLogs.some(l => l.note.includes('Vốn ban đầu là 20tr'));
-    
-    if (shouldMigrate && !isGlobalProcessing) {
-      handleResetAndRecalculateBudget();
-    }
-  }, [user?.isAdmin, budgetLogs.length]);
-
-  const handleResetAndRecalculateBudget = async () => {
-    setIsGlobalProcessing(true);
-    try {
-      const initialCapital = 20000000;
-      
-      // Filter logs: Keep ONLY loan-related and rank upgrade logs
-      const keptLogs = budgetLogs.filter(log => 
-        log.type === 'LOAN_DISBURSE' || 
-        log.type === 'LOAN_REPAY' || 
-        (log.type === 'ADD' && log.note.toLowerCase().includes('nâng hạng'))
-      );
-      
-      // Sort by createdAt ascending
-      const sortedLogs = [...keptLogs].sort((a, b) => 
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
-      
-      // Create new INITIAL log
-      const initialLog: BudgetLog = {
-        id: `BL_INIT_20M`,
-        type: 'INITIAL',
-        amount: initialCapital,
-        balanceAfter: initialCapital,
-        note: 'Vốn ban đầu là 20tr',
-        createdAt: sortedLogs.length > 0 
-          ? new Date(new Date(sortedLogs[0].createdAt).getTime() - 86400000).toISOString() // 1 day before first transaction
-          : new Date().toISOString()
-      };
-      
-      // Recalculate balances
-      let currentBalance = initialCapital;
-      const recalculatedLogs: BudgetLog[] = [initialLog];
-      
-      for (const log of sortedLogs) {
-        if (['ADD', 'LOAN_REPAY', 'INITIAL'].includes(log.type)) {
-          currentBalance += log.amount;
-        } else if (log.type === 'LOAN_DISBURSE') {
-          currentBalance -= log.amount;
-        }
-        
-        recalculatedLogs.push({
-          ...log,
-          balanceAfter: currentBalance
-        });
-      }
-      
-      const finalLogs = recalculatedLogs.reverse();
-      
-      const response = await authenticatedFetch('/api/admin/reset-budget-rewrite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          budget: currentBalance,
-          logs: finalLogs
-        })
-      });
-      
-      if (response.ok) {
-        setSystemBudget(currentBalance);
-        setBudgetLogs(finalLogs);
-        localStorage.setItem('ndv_budget', currentBalance.toString());
-        localStorage.setItem('ndv_budget_logs', JSON.stringify(finalLogs));
-        console.log("[BUDGET] Tự động chuẩn hóa vốn 20tr thành công.");
-      }
-    } catch (e) {
-      console.error("[BUDGET] Lỗi tự động migration:", e);
-    } finally {
-      setIsGlobalProcessing(false);
-    }
-  };
   const [dbError, setDbError] = useState<string | null>(null);
   const isProcessingRef = useRef(false);
   const lastActionTimestamp = useRef<number>(0);
@@ -3078,6 +2996,56 @@ const App: React.FC = () => {
     }
   };
 
+  const handleDeleteLoan = async (loanId: string) => {
+    if (isGlobalProcessing) return;
+    setIsGlobalProcessing(true);
+    try {
+      const resp = await authenticatedFetch('/api/loan/delete', {
+        method: 'POST',
+        body: JSON.stringify({ loanId })
+      });
+      if (resp.ok) {
+        setLoans(prev => prev.filter(l => l.id !== loanId));
+        toast.success("Đã xóa khoản vay");
+      } else {
+        const err = await resp.json();
+        toast.error(err.error || "Không thể xóa khoản vay");
+      }
+    } catch (e) {
+      console.error("Error deleting loan:", e);
+      toast.error("Lỗi hệ thống khi xóa");
+    } finally {
+      setIsGlobalProcessing(false);
+    }
+  };
+
+  const handleDeleteBudgetLog = async (logId: string) => {
+    if (isGlobalProcessing) return;
+    setIsGlobalProcessing(true);
+    try {
+      const resp = await authenticatedFetch('/api/budget-log/delete', {
+        method: 'POST',
+        body: JSON.stringify({ logId })
+      });
+      if (resp.ok) {
+        const result = await resp.json();
+        setBudgetLogs(prev => prev.filter(l => l.id !== logId));
+        if (result.newBudget !== undefined) {
+          setSystemBudget(result.newBudget);
+        }
+        toast.success("Đã xóa log thu chi thành công. Số dư đã được hoàn lại.");
+      } else {
+        const err = await resp.json();
+        toast.error(err.error || "Không thể xóa log");
+      }
+    } catch (e) {
+      console.error("Error deleting budget log:", e);
+      toast.error("Lỗi hệ thống khi xóa");
+    } finally {
+      setIsGlobalProcessing(false);
+    }
+  };
+
   // Automatic Financial Statistics Calculation
   useEffect(() => {
     if (!registeredUsers.length || !settings.RANK_CONFIG) return;
@@ -3551,6 +3519,7 @@ const App: React.FC = () => {
           onNavigateToUsers={() => setCurrentView(AppView.ADMIN_USERS)} 
           onNavigateToBudget={() => setCurrentView(AppView.ADMIN_BUDGET)} 
           onLogout={handleLogout} 
+          onDeleteLog={handleDeleteBudgetLog}
           onRefresh={() => fetchFullData(true)} 
           authenticatedFetch={authenticatedFetch} 
           settings={settings}
@@ -3559,13 +3528,14 @@ const App: React.FC = () => {
           onUpdateSettings={handleSaveSettings}
         />
       );
-      case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} isGlobalProcessing={isGlobalProcessing} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onEditUser={handleAdminEditUser} onResetPassword={handleAdminResetPassword} onEditLoan={handleAdminEditLoan} onDeleteUser={handleDeleteUser} onAutoCleanup={handleAutoCleanupUsers} onFetchFullData={fetchFullData} onRefresh={() => fetchFullData(true)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} settings={settings} />;
+      case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} isGlobalProcessing={isGlobalProcessing} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onEditUser={handleAdminEditUser} onResetPassword={handleAdminResetPassword} onEditLoan={handleAdminEditLoan} onDeleteUser={handleDeleteUser} onDeleteLoan={handleDeleteLoan} onAutoCleanup={handleAutoCleanupUsers} onFetchFullData={fetchFullData} onRefresh={() => fetchFullData(true)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} settings={settings} />;
       case AppView.ADMIN_BUDGET: 
         return (
           <AdminBudget 
             currentBudget={systemBudget} 
             logs={budgetLogs}
             onUpdateBudget={handleUpdateBudget}
+            onDeleteLog={handleDeleteBudgetLog}
             onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} 
             settings={settings}
           />

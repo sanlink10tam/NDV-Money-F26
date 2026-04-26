@@ -56,6 +56,7 @@ interface AdminUserManagementProps {
   onResetPassword: (userId: string) => Promise<void>;
   onEditLoan: (loanId: string, updatedData: Partial<LoanRecord>) => Promise<void>;
   onDeleteUser: (userId: string) => void;
+  onDeleteLoan: (loanId: string) => void;
   onAutoCleanup: () => Promise<number>;
   onFetchFullData?: () => Promise<void>;
   onRefresh?: () => void;
@@ -63,19 +64,28 @@ interface AdminUserManagementProps {
   settings: AppSettings;
 }
 
-const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans, isGlobalProcessing, onAction, onLoanAction, onEditUser, onResetPassword, onEditLoan, onDeleteUser, onAutoCleanup, onFetchFullData, onRefresh, onBack, settings }) => {
+const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans, isGlobalProcessing, onAction, onLoanAction, onEditUser, onResetPassword, onEditLoan, onDeleteUser, onDeleteLoan, onAutoCleanup, onFetchFullData, onRefresh, onBack, settings }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+
+  const [filterPendingOnly, setFilterPendingOnly] = useState(false);
+  const [zoomImage, setZoomImage] = useState<string | null>(null);
+
+  // Reset to page 1 when searching or changing filters
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterPendingOnly]);
+
   const [showAllLoansAdmin, setShowAllLoansAdmin] = useState<Record<string, boolean>>({});
   const [selectedContract, setSelectedContract] = useState<{ loan: LoanRecord, owner: UserType } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteLoanId, setConfirmDeleteLoanId] = useState<string | null>(null);
   const [confirmResetPasswordId, setConfirmResetPasswordId] = useState<string | null>(null);
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
   const [cleanupResultCount, setCleanupResultCount] = useState<number | null>(null);
   const [rejectingLoanId, setRejectingLoanId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [filterPendingOnly, setFilterPendingOnly] = useState(false);
-  const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [expandedSubSections, setExpandedSubSections] = useState<Record<string, Record<string, boolean>>>({});
 
   // Manual Edit States
@@ -152,11 +162,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
       if (filterPendingOnly) return getUserNotificationCount(u.id) > 0;
       return true;
     }).sort((a, b) => {
-      // 1. Expanded user always at the very top to prevent jumping while working
-      if (a.id === expandedUserId) return -1;
-      if (b.id === expandedUserId) return 1;
-
-      // 2. Priority by notification count (including loans needing action)
+      // 1. Priority by notification count (including loans needing action)
       const countA = getUserNotificationCount(a.id);
       const countB = getUserNotificationCount(b.id);
       if (countA !== countB) return countB - countA;
@@ -171,7 +177,6 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
     });
   }, [users, searchTerm, filterPendingOnly, expandedUserId, getUserNotificationCount, getLatestActivity]);
 
-  const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
   const totalPages = useMemo(() => Math.ceil(filteredUsers.length / itemsPerPage), [filteredUsers.length, itemsPerPage]);
   const displayedUsers = useMemo(() => filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage), [filteredUsers, currentPage, itemsPerPage]);
@@ -235,6 +240,13 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
     if (confirmDeleteId) {
       onDeleteUser(confirmDeleteId);
       setConfirmDeleteId(null);
+    }
+  };
+
+  const handleDeleteLoanConfirm = () => {
+    if (confirmDeleteLoanId) {
+      onDeleteLoan(confirmDeleteLoanId);
+      setConfirmDeleteLoanId(null);
     }
   };
 
@@ -710,6 +722,13 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
                                         >
                                           <Pencil size={12} />
                                         </button>
+                                        <button 
+                                          onClick={() => setConfirmDeleteLoanId(loan.id)}
+                                          className="w-6 h-6 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-500/20 transition-all"
+                                          title="Xóa khoản vay"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
                                       </div>
                                       {/* Accurate dynamic fine calculation for Admin visibility */}
                                       {(() => {
@@ -1154,6 +1173,41 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
                </button>
                <button 
                  onClick={handleDeleteConfirm}
+                 className="flex-1 py-4 bg-red-600 rounded-2xl text-[10px] font-black text-white uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/40"
+               >
+                 <Trash2 size={14} /> ĐỒNG Ý XÓA
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Loan Delete */}
+      {confirmDeleteLoanId && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-300">
+          <div className="bg-[#111111] border border-red-600/20 w-full max-w-sm rounded-[2.5rem] p-8 space-y-8 relative shadow-2xl overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-red-600"></div>
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-16 h-16 bg-red-600/10 rounded-full flex items-center justify-center text-red-600">
+                 <AlertCircle size={32} />
+              </div>
+              <div className="space-y-3">
+                <h3 className="text-xl font-black text-white uppercase tracking-tighter">XÓA KHOẢN VAY?</h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase leading-relaxed px-4">
+                  Bạn có chắc chắn muốn xóa vĩnh viễn hồ sơ vay <span className="text-white font-black">{confirmDeleteLoanId}</span>? Thao tác này <span className="text-red-500 font-black">KHÔNG THỂ HOÀN TÁC</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+               <button 
+                 onClick={() => setConfirmDeleteLoanId(null)}
+                 className="flex-1 py-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-gray-500 uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2"
+               >
+                 <X size={14} /> HỦY BỎ
+               </button>
+               <button 
+                 onClick={handleDeleteLoanConfirm}
                  className="flex-1 py-4 bg-red-600 rounded-2xl text-[10px] font-black text-white uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-900/40"
                >
                  <Trash2 size={14} /> ĐỒNG Ý XÓA

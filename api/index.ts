@@ -2179,7 +2179,15 @@ router.post("/loans", async (req: any, res) => {
       if (newLoan) {
         const settings = await getMergedSettings(client);
         
-        // Check Min Amount
+        // 1. Check Rounding (Must be multiple of 1,000,000)
+        if (newLoan.amount % 1000000 !== 0) {
+          return res.status(400).json({ 
+            error: "Số tiền không hợp lệ", 
+            message: "Các khoản vay phải là bội số của 1.000.000 đ (ví dụ: 1tr, 2tr, 3tr...)." 
+          });
+        }
+
+        // 2. Check Min Amount
         const minAmount = Number(settings.MIN_LOAN_AMOUNT || 1000000);
         if (newLoan.amount < minAmount) {
           return res.status(400).json({ 
@@ -2188,14 +2196,14 @@ router.post("/loans", async (req: any, res) => {
           });
         }
 
-        // Check System Budget
+        // 3. Check System Budget
         const minBudget = Number(settings.MIN_SYSTEM_BUDGET || 1000000);
         const currentBudget = Number(settings.SYSTEM_BUDGET || 0);
         
         if (currentBudget < minBudget) {
           return res.status(400).json({ 
             error: "Hệ thống bảo trì", 
-            message: "Hệ thống đang bảo trì nguồn vốn. Vui lòng quay lại sau." 
+            message: "Hệ thống đang bảo trì nguồn vốn (vốn còn lại dưới 1 triệu). Vui lòng quay lại sau." 
           });
         }
       }
@@ -2357,7 +2365,14 @@ router.post("/budget", async (req: any, res) => {
       
       if (type === 'ADD') finalBudget = currentValue + amount;
       else if (type === 'WITHDRAW') finalBudget = currentValue - amount;
-      else if (type === 'INITIAL') finalBudget = amount;
+      else if (type === 'INITIAL') {
+        const { data: loans } = await client.from('loans').select('amount, status');
+        const activeStatuses = ['ĐANG NỢ', 'QUÁ HẠN', 'CHỜ TẤT TOÁN', 'ĐANG ĐỐI SOÁT'];
+        const activeDebt = loans
+          ? loans.filter((l: any) => activeStatuses.includes(l.status)).reduce((sum: number, l: any) => sum + Number(l.amount || 0), 0)
+          : 0;
+        finalBudget = amount - activeDebt;
+      }
     }
 
     const { error } = await client.from('config').upsert({ key: 'SYSTEM_BUDGET', value: finalBudget }, { onConflict: 'key' });
@@ -2382,6 +2397,144 @@ router.post("/budget", async (req: any, res) => {
     sendSafeJson(res, { success: true });
   } catch (e: any) {
     console.error("Lỗi trong /api/budget:", e);
+    res.status(500).json({ error: "Lỗi máy chủ nội bộ", message: e.message });
+  }
+});
+
+router.post("/loan/delete", async (req: any, res) => {
+  try {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Chỉ Admin mới có quyền thực hiện thao tác này" });
+    }
+    const client = initSupabase();
+    if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
+    
+    const { loanId } = req.body;
+    if (!loanId) return res.status(400).json({ error: "Thiếu ID khoản vay" });
+
+    // 1. Fetch loan details to know its impact
+    const { data: loan, error: fetchError } = await client.from('loans').select('*').eq('id', loanId).single();
+    
+    if (loan) {
+      // 2. Determine budget impact if it was already disbursed or had activity
+      // Usually we look for budget logs associated with this loan
+      const { data: relatedLogs } = await client.from('budget_logs').select('*').ilike('note', `%${loanId}%`);
+      
+      let budgetDelta = 0;
+      if (relatedLogs && relatedLogs.length > 0) {
+        for (const log of relatedLogs) {
+          switch (log.type) {
+            case 'LOAN_DISBURSE':
+              budgetDelta += log.amount; // Add back disbursed amount
+              break;
+            case 'LOAN_REPAY':
+              budgetDelta -= log.amount; // Subtract repaid amount
+              break;
+          }
+        }
+      }
+
+      if (budgetDelta !== 0) {
+        const settings = await getMergedSettings(client);
+        const currentBudget = Number(settings.SYSTEM_BUDGET || 0);
+        await saveSystemSettings(client, { SYSTEM_BUDGET: currentBudget + budgetDelta });
+        
+        // Also delete these logs so they don't stay orphaned and misleading
+        await client.from('budget_logs').delete().ilike('note', `%${loanId}%`);
+        
+        settingsCache = null;
+        lastCacheUpdate = 0;
+      }
+    }
+
+    const { error: deleteError } = await client.from('loans').delete().eq('id', loanId);
+    if (deleteError) throw deleteError;
+    
+    sendSafeJson(res, { success: true });
+  } catch (e: any) {
+    console.error("Lỗi trong /api/loan/delete:", e);
+    res.status(500).json({ error: "Lỗi máy chủ nội bộ", message: e.message });
+  }
+});
+
+router.post("/budget-log/delete", async (req: any, res) => {
+  try {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Chỉ Admin mới có quyền thực hiện thao tác này" });
+    }
+    const client = initSupabase();
+    if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
+    
+    const { logId } = req.body;
+    if (!logId) return res.status(400).json({ error: "Thiếu ID log" });
+
+    // 1. Fetch the log to know its type and amount
+    const { data: log, error: fetchError } = await client.from('budget_logs').select('*').eq('id', logId).single();
+    if (fetchError || !log) {
+      return res.status(404).json({ error: "Không tìm thấy bản ghi log" });
+    }
+
+    // 2. Fetch current settings to update budget
+    const settings = await getMergedSettings(client);
+    let currentBudget = Number(settings.SYSTEM_BUDGET || 0);
+    let loanProfit = Number(settings.TOTAL_LOAN_PROFIT || 0);
+
+    // 3. Determine reversal impact
+    // Log types: 'INITIAL' | 'ADD' | 'WITHDRAW' | 'LOAN_DISBURSE' | 'LOAN_REPAY' | 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT'
+    let budgetDelta = 0;
+    let profitDelta = 0;
+
+    switch (log.type) {
+      case 'INITIAL':
+      case 'ADD':
+      case 'ADJUSTMENT_IN':
+        // Deleting an inflow: Subtract from budget
+        budgetDelta = -log.amount;
+        break;
+      case 'WITHDRAW':
+      case 'ADJUSTMENT_OUT':
+        // Deleting an outflow: Add back to budget
+        budgetDelta = log.amount;
+        break;
+      case 'LOAN_DISBURSE':
+        // Deleting disbursement: Add back to budget
+        budgetDelta = log.amount;
+        // Also potentially reverse loan profit if fee was included?
+        // In DISBURSE handler: profitAmount = loan.amount * feePercent
+        // But the log.amount is (loan.amount * (1 - feePercent))
+        // The fee stays in the budget. So reversing the disburse log only adds back the net disburse amount.
+        break;
+      case 'LOAN_REPAY':
+        // Deleting repayment: Subtract from budget
+        budgetDelta = -log.amount;
+        // Repayment often comes with profit. 
+        // This is tricky because we don't store EXACTLY how much of LOAN_REPAY was profit in the log itself.
+        // However, usually LOAN_REPAY = Principal + Fine.
+        break;
+    }
+
+    // 4. Perform updates
+    const updates: any = {
+      SYSTEM_BUDGET: currentBudget + budgetDelta
+    };
+
+    const saved = await saveSystemSettings(client, updates);
+    if (!saved) throw new Error("Không thể cập nhật cấu hình hệ thống");
+
+    // 5. Delete the log
+    const { error: deleteError } = await client.from('budget_logs').delete().eq('id', logId);
+    if (deleteError) throw deleteError;
+    
+    // Clear cache
+    settingsCache = null;
+    lastCacheUpdate = 0;
+
+    sendSafeJson(res, { 
+      success: true, 
+      newBudget: currentBudget + budgetDelta 
+    });
+  } catch (e: any) {
+    console.error("Lỗi trong /api/budget-log/delete:", e);
     res.status(500).json({ error: "Lỗi máy chủ nội bộ", message: e.message });
   }
 });
@@ -2520,12 +2673,46 @@ router.delete("/users/:id", async (req: any, res) => {
     const client = initSupabase();
     if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
     const userId = req.params.id;
+
+    // 1. Revert budget impact for all user's loans before deleting them
+    const { data: userLoans } = await client.from('loans').select('id').eq('userId', userId);
+    if (userLoans && userLoans.length > 0) {
+      const loanIds = userLoans.map(l => l.id);
+      
+      // Find all logs related to these loans
+      let totalBudgetDelta = 0;
+      for (const loanId of loanIds) {
+        const { data: relatedLogs } = await client.from('budget_logs').select('*').ilike('note', `%${loanId}%`);
+        if (relatedLogs) {
+          for (const log of relatedLogs) {
+            if (log.type === 'LOAN_DISBURSE') totalBudgetDelta += log.amount;
+            if (log.type === 'LOAN_REPAY') totalBudgetDelta -= log.amount;
+          }
+        }
+        // Also delete these logs
+        await client.from('budget_logs').delete().ilike('note', `%${loanId}%`);
+      }
+
+      // Find logs related to rank upgrades for this user by their ID in note if possible
+      // Actually, rank upgrade logs usually mention full name. 
+      // But we also search by userId if we stored it? Unlikely.
+      // Let's at least handle the loans which is the biggest part.
+
+      if (totalBudgetDelta !== 0) {
+        const settings = await getMergedSettings(client);
+        const currentBudget = Number(settings.SYSTEM_BUDGET || 0);
+        await saveSystemSettings(client, { SYSTEM_BUDGET: currentBudget + totalBudgetDelta });
+      }
+    }
     
     // Delete children first due to foreign key constraints
     await client.from('loans').delete().eq('userId', userId);
     await client.from('notifications').delete().eq('userId', userId);
     await client.from('users').delete().eq('id', userId);
     
+    settingsCache = null;
+    lastCacheUpdate = 0;
+
     sendSafeJson(res, { success: true });
   } catch (e: any) {
     console.error("Lỗi trong DELETE /api/users/:id:", e);
