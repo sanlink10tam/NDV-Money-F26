@@ -124,6 +124,15 @@ const App: React.FC = () => {
     }
     return null;
   });
+
+  // State for server-side search and counts
+  const [totalUsers, setTotalUsers] = useState<number>(0);
+  const [totalLoans, setTotalLoans] = useState<number>(0);
+  const [userSearchTerm, setUserSearchTerm] = useState<string>('');
+  const [loanSearchTerm, setLoanSearchTerm] = useState<string>('');
+  const [userRange, setUserRange] = useState({ from: 0, to: 49 }); // Default shows 50 users
+  const [loanRange, setLoanRange] = useState({ from: 0, to: 49 });
+
   const [token, setToken] = useState<string | null>(() => {
     return localStorage.getItem('vnv_token') || sessionStorage.getItem('vnv_token');
   });
@@ -1761,11 +1770,15 @@ const App: React.FC = () => {
       params.append('userId', user.id);
       if (user.isAdmin) {
         params.append('isAdmin', 'true');
-        // Fetch a larger range for "Full Data" to ensure search finds old users
-        params.append('userFrom', '0');
-        params.append('userTo', '999'); // 1000 users for search flexibility
-        params.append('loanFrom', '0');
-        params.append('loanTo', '499'); // 500 loans
+        
+        // Use ranges from state
+        params.append('userFrom', userRange.from.toString());
+        params.append('userTo', userRange.to.toString());
+        params.append('loanFrom', loanRange.from.toString());
+        params.append('loanTo', loanRange.to.toString());
+        
+        if (userSearchTerm) params.append('userSearch', userSearchTerm);
+        if (loanSearchTerm) params.append('loanSearch', loanSearchTerm);
       }
       
       // Delta update logic
@@ -1800,6 +1813,9 @@ const App: React.FC = () => {
         lastFullFetch.current = Date.now();
         setLastSyncTime(Date.now());
         localStorage.setItem('ndv_last_sync_time', Date.now().toString());
+
+        if (data.totalUsers !== undefined) setTotalUsers(data.totalUsers);
+        if (data.totalLoans !== undefined) setTotalLoans(data.totalLoans);
 
         if (data.loans) setLoans(prev => {
           const next = [...prev];
@@ -1872,6 +1888,28 @@ const App: React.FC = () => {
       console.error("Lỗi khi tải dữ liệu đầy đủ:", e);
     } finally {
       setIsGlobalProcessing(false);
+    }
+  };
+
+  // Auto-refetch when search or range changes (Admin only)
+  useEffect(() => {
+    if (user?.isAdmin && (userSearchTerm || loanSearchTerm || userRange.from > 0 || loanRange.from > 0)) {
+       const timer = setTimeout(() => {
+         fetchFullData();
+       }, 500); // 500ms debounce
+       return () => clearTimeout(timer);
+    }
+  }, [userSearchTerm, loanSearchTerm, userRange, loanRange]);
+
+  const handleFetchUserDetail = async (userId: string) => {
+    try {
+      const response = await authenticatedFetch(`/api/users/${userId}`);
+      if (response.ok) {
+        const fullUser = await response.json();
+        setRegisteredUsers(prev => prev.map(u => u.id === userId ? { ...u, ...fullUser } : u));
+      }
+    } catch (e) {
+      console.error("Lỗi khi tải chi tiết người dùng:", e);
     }
   };
 
@@ -3555,7 +3593,7 @@ const App: React.FC = () => {
           onUpdateSettings={handleSaveSettings}
         />
       );
-      case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} isGlobalProcessing={isGlobalProcessing} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onEditUser={handleAdminEditUser} onResetPassword={handleAdminResetPassword} onEditLoan={handleAdminEditLoan} onDeleteUser={handleDeleteUser} onDeleteLoan={handleDeleteLoan} onAutoCleanup={handleAutoCleanupUsers} onFetchFullData={fetchFullData} onRefresh={() => fetchFullData(true)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} settings={settings} />;
+      case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} isGlobalProcessing={isGlobalProcessing} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onEditUser={handleAdminEditUser} onResetPassword={handleAdminResetPassword} onEditLoan={handleAdminEditLoan} onDeleteUser={handleDeleteUser} onDeleteLoan={handleDeleteLoan} onAutoCleanup={handleAutoCleanupUsers} onFetchFullData={fetchFullData} onFetchUserDetail={handleFetchUserDetail} onRefresh={() => fetchFullData(true)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} totalUsers={totalUsers} totalLoans={totalLoans} onSearchUsers={(term: string) => setUserSearchTerm(term)} onSearchLoans={(term: string) => setLoanSearchTerm(term)} userRange={userRange} loanRange={loanRange} onSetUserRange={setUserRange} onSetLoanRange={setLoanRange} settings={settings} />;
       case AppView.ADMIN_BUDGET: 
         return (
           <AdminBudget 

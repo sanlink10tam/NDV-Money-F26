@@ -62,9 +62,24 @@ interface AdminUserManagementProps {
   onRefresh?: () => void;
   onBack: () => void;
   settings: AppSettings;
+  
+  // Server-side props
+  totalUsers?: number;
+  totalLoans?: number;
+  onSearchUsers?: (term: string) => void;
+  onSearchLoans?: (term: string) => void;
+  onFetchUserDetail?: (userId: string) => void;
+  userRange?: { from: number, to: number };
+  loanRange?: { from: number, to: number };
+  onSetUserRange?: (range: { from: number, to: number }) => void;
+  onSetLoanRange?: (range: { from: number, to: number }) => void;
 }
 
-const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans, isGlobalProcessing, onAction, onLoanAction, onEditUser, onResetPassword, onEditLoan, onDeleteUser, onDeleteLoan, onAutoCleanup, onFetchFullData, onRefresh, onBack, settings }) => {
+const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ 
+  users, loans, isGlobalProcessing, onAction, onLoanAction, onEditUser, onResetPassword, onEditLoan, 
+  onDeleteUser, onDeleteLoan, onAutoCleanup, onFetchFullData, onRefresh, onBack, settings,
+  totalUsers = 0, totalLoans = 0, onSearchUsers, onSearchLoans, onFetchUserDetail, userRange, onSetUserRange
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
@@ -161,6 +176,14 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
     return userLoans.reduce((sum, l) => sum + l.amount, 0);
   }, [loans]);
 
+  // Handle Search with debounce or immediate trigger
+  const handleSearchChange = (val: string) => {
+    setSearchTerm(val);
+    if (onSearchUsers) {
+      onSearchUsers(val);
+    }
+  };
+
   const filteredUsers = useMemo(() => {
     return users.filter(u => {
       const matchesSearch = u.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -249,6 +272,11 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
       setExpandedUserId(null);
     } else {
       setExpandedUserId(userId);
+      // Fetch full details if not already present (e.g. missing idFront)
+      const u = users.find(user => user.id === userId);
+      if (onFetchUserDetail && u && !u.idFront) {
+        onFetchUserDetail(userId);
+      }
     }
   };
 
@@ -320,7 +348,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
             type="text" 
             placeholder="Tìm Tên, Số Zalo hoặc ID..." 
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="flex-1 bg-transparent py-4 pl-12 pr-4 text-xs font-bold text-white placeholder-gray-600 focus:outline-none"
           />
           
@@ -360,6 +388,27 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="flex items-center justify-between px-2 mb-2 shrink-0">
+        <div className="flex items-center gap-2">
+          <Users size={12} className="text-gray-600" />
+          <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
+            ĐANG HIỂN THỊ {users.length} / {totalUsers} KHÁCH HÀNG
+          </span>
+        </div>
+        {users.length < totalUsers && (
+          <button 
+            onClick={() => {
+              if (onSetUserRange && userRange) {
+                onSetUserRange({ ...userRange, to: userRange.to + 50 });
+              }
+            }}
+            className="text-[9px] font-black text-[#ff8c00] uppercase tracking-widest flex items-center gap-1 hover:underline underline-offset-4"
+          >
+            TẢI THÊM <ArrowDownToLine size={10} />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-3">

@@ -1695,6 +1695,8 @@ router.get("/data", async (req, res) => {
     const isAdmin = (req as any).user?.isAdmin === true;
     const isBackup = req.query.backup === 'true';
     const userIdFromQuery = req.query.userId as string;
+    const userSearch = req.query.userSearch as string;
+    const loanSearch = req.query.loanSearch as string;
 
     // SECURITY: Strictly block any non-admin from requesting a full backup
     if (isBackup && !isAdmin) {
@@ -1710,7 +1712,7 @@ router.get("/data", async (req, res) => {
         const from = parseInt(req.query.userFrom as string) || 0;
         // Optimization: When backup=true, we fetch all users (up to 10000)
         // Normal admin view fetches 20-1000 based on params
-        const to = isBackup ? 10000 : (parseInt(req.query.userTo as string) || (req.query.full === 'true' ? 999 : 19));
+        const to = isBackup ? 10000 : (parseInt(req.query.userTo as string) || (req.query.full === 'true' ? 99 : 19));
         const since = parseInt(req.query.since as string) || 0;
 
         // Security: Only fetch full columns if explicitly requested (e.g. for profile or admin edit)
@@ -1725,13 +1727,17 @@ router.get("/data", async (req, res) => {
         
         const columns = isBackup ? '*' : columnsList.join(',');
           
-        let query = client.from('users').select(columns);
+        let query = client.from('users').select(columns, { count: 'exact' });
         
         // SECURITY: If not admin, ONLY allow fetching own data
         if (!isAdmin) {
-          if (!userIdFromQuery) return [];
+          if (!userIdFromQuery) return { data: [], count: 0 };
           query = query.eq('id', userIdFromQuery);
         } else {
+          // Server-side search for admin
+          if (userSearch) {
+            query = query.or(`phone.ilike.%${userSearch}%,fullName.ilike.%${userSearch}%,id.ilike.%${userSearch}%,idNumber.ilike.%${userSearch}%`);
+          }
           // Pagination for admin
           query = query.order('updatedAt', { ascending: false }).range(from, to);
         }
@@ -1740,7 +1746,7 @@ router.get("/data", async (req, res) => {
           query = query.gt('updatedAt', since);
         }
         
-        const { data, error } = await query;
+        const { data, count, error } = await query;
         if (error) {
           // Re-attempt without missing columns if it looks like a schema issue
           if (error.code === 'PGRST204' || error.code === '42703' || (error.message && error.message.includes('column') && error.message.includes('does not exist'))) {
@@ -1751,17 +1757,17 @@ router.get("/data", async (req, res) => {
                const columnsList = columns.split(',').map(c => c.trim());
                const saferColumns = columnsList.filter(c => !commonNewColumns.includes(c)).join(',');
                console.log(`[API] Retrying with safer columns: ${saferColumns}`);
-               const { data: retryData, error: retryError } = await client.from('users').select(saferColumns).range(from, to);
-               if (!retryError) return retryData || [];
+               const { data: retryData, count: retryCount, error: retryError } = await client.from('users').select(saferColumns, { count: 'exact' }).range(from, to);
+               if (!retryError) return { data: retryData || [], count: retryCount || 0 };
              }
           }
 
           // If custom columns fail, fallback to * for admin
           if (isAdmin) {
              console.warn("[API] Falling back to select('*') for users fetch...");
-             const { data: fallbackData, error: fallbackError } = await client.from('users').select('*').range(from, to);
+             const { data: fallbackData, count: fallbackCount, error: fallbackError } = await client.from('users').select('*', { count: 'exact' }).range(from, to);
              if (fallbackError) throw fallbackError;
-             return fallbackData || [];
+             return { data: fallbackData || [], count: fallbackCount || 0 };
           }
           throw error;
         }
@@ -1780,25 +1786,29 @@ router.get("/data", async (req, res) => {
           }
         }
         
-        return data || [];
+        return { data: data || [], count: count || 0 };
       } catch (e: any) {
         console.error("Lỗi fetch users:", e.message || e);
-        return [];
+        return { data: [], count: 0 };
       }
     };
 
     const fetchLoans = async () => {
       try {
         const from = parseInt(req.query.loanFrom as string) || 0;
-        const to = isBackup ? 10000 : (parseInt(req.query.loanTo as string) || (req.query.full === 'true' ? 999 : 19));
+        const to = isBackup ? 10000 : (parseInt(req.query.loanTo as string) || (req.query.full === 'true' ? 99 : 19));
         const since = parseInt(req.query.since as string) || 0;
 
         const columnsToFetch = req.query.full === 'true' ? LOAN_COLUMNS.join(',') : LOAN_SUMMARY_COLUMNS.join(',');
-        let query = client.from('loans').select(columnsToFetch);
+        let query = client.from('loans').select(columnsToFetch, { count: 'exact' });
         
         if (!isAdmin && userIdFromQuery) {
           query = query.eq('userId', userIdFromQuery);
         } else if (isAdmin) {
+          // Server-side search for admin
+          if (loanSearch) {
+            query = query.or(`id.ilike.%${loanSearch}%,userName.ilike.%${loanSearch}%,userId.ilike.%${loanSearch}%,bankTransactionId.ilike.%${loanSearch}%`);
+          }
           // Pagination for admin
           query = query.order('updatedAt', { ascending: false }).range(from, to);
         }
@@ -1807,12 +1817,12 @@ router.get("/data", async (req, res) => {
           query = query.gt('updatedAt', since);
         }
 
-        const { data, error } = await query;
+        const { data, count, error } = await query;
         if (error) throw error;
-        return data || [];
+        return { data: data || [], count: count || 0 };
       } catch (e: any) {
         console.error("Lỗi fetch loans:", e.message || e);
-        return [];
+        return { data: [], count: 0 };
       }
     };
 
@@ -1823,7 +1833,7 @@ router.get("/data", async (req, res) => {
         const since = parseInt(req.query.since as string) || 0;
 
         const columns = req.query.full === 'true' ? NOTIFICATION_COLUMNS.join(',') : NOTIFICATION_SUMMARY_COLUMNS.join(',');
-        let query = client.from('notifications').select(columns).order('id', { ascending: false });
+        let query = client.from('notifications').select(columns, { count: 'exact' }).order('id', { ascending: false });
         
         if (!isAdmin && userIdFromQuery) {
           query = query.eq('userId', userIdFromQuery);
@@ -1835,12 +1845,12 @@ router.get("/data", async (req, res) => {
         // Delta update for notifications is less critical but good to have
         // However, since we use range, we can just let it be or add updatedAt if table has it
         
-        const { data, error } = await query.range(from, to);
+        const { data, count, error } = await query.range(from, to);
         if (error) throw error;
-        return data || [];
+        return { data: data || [], count: count || 0 };
       } catch (e: any) {
         console.error("Lỗi fetch notifications:", e.message || e);
-        return [];
+        return { data: [], count: 0 };
       }
     };
 
@@ -1856,36 +1866,36 @@ router.get("/data", async (req, res) => {
     };
 
     const fetchBudgetLogs = async () => {
-      if (!isAdmin) return []; // Only admin needs budget logs
+      if (!isAdmin) return { data: [], count: 0 }; // Only admin needs budget logs
       try {
         let query = client.from('budget_logs')
-          .select('*')
+          .select('*', { count: 'exact' })
           .order('createdAt', { ascending: false });
         
         if (!isBackup) {
           query = query.limit(30); // Reduced from 50 to 30 for faster initial load
         }
         
-        const { data, error } = await query;
+        const { data, count, error } = await query;
         if (error) throw error;
-        return data || [];
+        return { data: data || [], count: count || 0 };
       } catch (e: any) {
         console.error("Lỗi fetch budget logs:", e.message || e);
-        return [];
+        return { data: [], count: 0 };
       }
     };
 
     // Parallelize queries
-    const start = Date.now();
-    const [users, loans, notifications, config, budgetLogs] = await Promise.all([
+    const startFetch = Date.now();
+    const [userRes, loanRes, notifRes, config, logRes] = await Promise.all([
       fetchUsers(),
       fetchLoans(),
       fetchNotifications(),
       fetchConfig(),
       fetchBudgetLogs()
     ]);
-    const end = Date.now();
-    console.log(`[API] Data fetch took ${end - start}ms. Users: ${users.length}, Loans: ${loans.length}`);
+    const endFetch = Date.now();
+    console.log(`[API] Data fetch took ${endFetch - startFetch}ms. Users: ${userRes.data.length}, Loans: ${loanRes.data.length}`);
 
     const budget = Number(config?.find(c => c.key === 'SYSTEM_BUDGET')?.value || config?.find(c => c.key === 'budget')?.value) || 0;
     const rankProfit = Number(config?.find(c => c.key === 'TOTAL_RANK_PROFIT')?.value || config?.find(c => c.key === 'rankProfit')?.value) || 0;
@@ -1894,15 +1904,19 @@ router.get("/data", async (req, res) => {
     const lastKeepAlive = config?.find(c => c.key === 'lastKeepAlive')?.value || null;
 
     const payload = {
-      users,
-      loans,
-      notifications,
+      users: userRes.data,
+      loans: loanRes.data,
+      notifications: notifRes.data,
+      totalUsers: userRes.count,
+      totalLoans: loanRes.count,
+      totalNotifications: notifRes.count,
       budget,
       rankProfit,
       loanProfit,
       monthlyStats,
       lastKeepAlive,
-      budgetLogs,
+      budgetLogs: logRes.data,
+      totalBudgetLogs: logRes.count,
       configs: isBackup ? Object.fromEntries(config.map(c => [c.key, c.value])) : undefined // Proper way to export all configs
     };
 
@@ -1930,6 +1944,38 @@ router.get("/data", async (req, res) => {
       error: "Lỗi hệ thống", 
       message: `Đã xảy ra lỗi nghiêm trọng: ${e.message || "Không xác định"}. Vui lòng kiểm tra lại kết nối Supabase.` 
     });
+  }
+});
+
+// Get single user details (full)
+router.get("/users/:id", async (req: any, res) => {
+  try {
+    const client = initSupabase();
+    if (!client) return res.status(503).json({ error: "Supabase chưa được cấu hình" });
+    
+    const userId = req.params.id;
+    const isAdmin = req.user?.isAdmin === true;
+    
+    // SECURITY: Non-admins can only fetch their own details
+    if (!isAdmin && userId !== req.user.id) {
+      return res.status(403).json({ error: "Bạn không có quyền truy cập thông tin này" });
+    }
+    
+    const { data, error } = await client
+      .from('users')
+      .select(USER_COLUMNS.join(','))
+      .eq('id', userId)
+      .single();
+      
+    if (error) {
+       if (error.code === 'PGRST116') return res.status(404).json({ error: "Không tìm thấy người dùng" });
+       throw error;
+    }
+    
+    sendSafeJson(res, data);
+  } catch (e: any) {
+    console.error("Lỗi fetch user detail:", e);
+    res.status(500).json({ error: "Lỗi hệ thống", message: e.message });
   }
 });
 
@@ -2945,11 +2991,11 @@ const USER_COLUMNS = [
 
 const USER_WRITE_COLUMNS = [...USER_COLUMNS, 'password'];
 
+// Leaner summary for list views
 const USER_SUMMARY_COLUMNS = [
   'id', 'phone', 'fullName', 'idNumber', 'balance', 'totalLimit', 'rank', 
-  'rankProgress', 'isLoggedIn', 'isAdmin', 'pendingUpgradeRank', 'rankUpgradeBill', 'avatar',
-  'address', 'joinDate', 'refZalo', 'relationship', 'lastLoanSeq', 'bankName', 'bankBin', 
-  'bankAccountNumber', 'bankAccountHolder', 'hasJoinedZalo', 'idFront', 'idBack', 'spins', 'totalProfit', 'fullSettlementCount', 'lastPenaltyDate', 'penaltyStreak', 'updatedAt'
+  'rankProgress', 'isLoggedIn', 'isAdmin', 'pendingUpgradeRank', 'updatedAt', 
+  'refZalo', 'joinDate', 'avatar'
 ];
 
 const LOAN_COLUMNS = [
@@ -2961,8 +3007,7 @@ const LOAN_COLUMNS = [
 
 const LOAN_SUMMARY_COLUMNS = [
   'id', 'userId', 'userName', 'amount', 'date', 'createdAt', 'status', 
-  'fine', 'billImage', 'bankTransactionId', 'rejectionReason', 'loanPurpose',
-  'settlementType', 'partialAmount', 'voucherId', 'settledAt', 'principalPaymentCount', 'extensionCount', 'partialPaymentCount', 'originalBaseId', 'signature', 'consolidatedInto', 'updatedAt'
+  'fine', 'rejectionReason', 'loanPurpose', 'originalBaseId', 'updatedAt'
 ];
 
 const NOTIFICATION_COLUMNS = [
