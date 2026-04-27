@@ -442,9 +442,9 @@ const App: React.FC = () => {
   }, [adminNotifications]);
 
   const calculateUserBalance = useCallback((u: User, userLoans: LoanRecord[]) => {
-    // ONLY ĐÃ TẤT TOÁN and BỊ TỪ CHỐI are not debt. Everything else counts as debt.
+    // ONLY ĐÃ TẤT TOÁN, BỊ TỪ CHỐI and ĐÃ CỘNG DỒN are not current debt. everything else counts as debt.
     const activeDebt = userLoans
-      .filter(l => l.status !== 'ĐÃ TẤT TOÁN' && (l.status as string) !== 'ĐA TẤT TOÁN' && l.status !== 'BỊ TỪ CHỐI')
+      .filter(l => l.status !== 'ĐÃ TẤT TOÁN' && l.status !== 'BỊ TỪ CHỐI' && l.status !== 'ĐÃ CỘNG DỒN')
       .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
     return Math.max(0, (Number(u.totalLimit) || 0) - activeDebt);
   }, []);
@@ -1878,10 +1878,29 @@ const App: React.FC = () => {
   const handleApplyLoan = async (amount: number, signature?: string, loanPurpose?: string) => {
     if (!user || isProcessingRef.current) return;
 
-    // Chặn spam: Kiểm tra xem có khoản vay nào đang chờ xử lý không
+    // Chặn spam và nợ quá hạn
     const userLoans = loans.filter(l => l.userId === user.id);
     const hasPending = userLoans.some(l => ['CHỜ DUYỆT', 'ĐÃ DUYỆT', 'ĐANG GIẢI NGÂN', 'CHỜ TẤT TOÁN'].includes(l.status));
     
+    // Kiểm tra nợ quá hạn (Trạng thái QUÁ HẠN hoặc ĐANG NỢ nhưng đã quá ngày)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const hasOverdue = userLoans.some(l => {
+      if (l.status === 'QUÁ HẠN' || l.status === 'OVERDUE') return true;
+      if (['ĐANG NỢ', 'CHỜ TẤT TOÁN'].includes(l.status) && l.date) {
+        const [d, m, y] = l.date.split('/').map(Number);
+        const dueDate = new Date(y, m - 1, d);
+        return dueDate < today;
+      }
+      return false;
+    });
+    
+    if (hasOverdue) {
+      toast.error("Bạn đang có khoản vay quá hạn. Vui lòng tất toán khoản vay cũ trước khi đăng ký khoản mới.");
+      return;
+    }
+
     if (hasPending) {
       toast.warning("Bạn đang có một khoản vay đang được xử lý. Vui lòng đợi cho đến khi khoản vay hiện tại hoàn tất trước khi đăng ký khoản mới.");
       return;
@@ -3033,7 +3052,15 @@ const App: React.FC = () => {
         if (result.newBudget !== undefined) {
           setSystemBudget(result.newBudget);
         }
-        toast.success("Đã xóa log thu chi thành công. Số dư đã được hoàn lại.");
+        if (result.newLoanProfit !== undefined) {
+          setLoanProfit(result.newLoanProfit);
+          localStorage.setItem('ndv_loan_profit', result.newLoanProfit.toString());
+        }
+        if (result.newRankProfit !== undefined) {
+          setRankProfit(result.newRankProfit);
+          localStorage.setItem('ndv_rank_profit', result.newRankProfit.toString());
+        }
+        toast.success("Đã xóa log thu chi thành công. Dữ liệu hệ thống đã được hoàn lại.");
       } else {
         const err = await resp.json();
         toast.error(err.error || "Không thể xóa log");

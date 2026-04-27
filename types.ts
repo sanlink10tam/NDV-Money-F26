@@ -87,7 +87,7 @@ export interface LoanRecord {
   amount: number;
   date: string; 
   createdAt: string; 
-  status: 'CHỜ DUYỆT' | 'ĐÃ DUYỆT' | 'ĐANG GIẢI NGÂN' | 'ĐANG NỢ' | 'ĐANG ĐỐI SOÁT' | 'CHỜ TẤT TOÁN' | 'ĐÃ TẤT TOÁN' | 'BỊ TỪ CHỐI';
+  status: 'CHỜ DUYỆT' | 'ĐÃ DUYỆT' | 'ĐANG GIẢI NGÂN' | 'ĐANG NỢ' | 'ĐANG ĐỐI SOÁT' | 'CHỜ TẤT TOÁN' | 'ĐÃ TẤT TOÁN' | 'BỊ TỪ CHỐI' | 'ĐÃ CỘNG DỒN';
   fine?: number;
   billImage?: string;
   bankTransactionId?: string;
@@ -105,6 +105,7 @@ export interface LoanRecord {
   payosOrderCode?: number;
   payosCheckoutUrl?: string;
   payosExpireAt?: number;
+  consolidatedInto?: string;
   updatedAt?: number;
 }
 

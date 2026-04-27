@@ -121,6 +121,8 @@ const Dashboard: React.FC<DashboardProps> = React.memo(({
         return 'ĐÃ TẤT TOÁN';
       case 'BỊ TỪ CHỐI':
         return 'BỊ TỪ CHỐI';
+      case 'ĐÃ CỘNG DỒN':
+        return 'CỘNG DỒN';
       default:
         return status;
     }
@@ -134,6 +136,7 @@ const Dashboard: React.FC<DashboardProps> = React.memo(({
       case 'ĐANG NỢ': return 'text-orange-500';
       case 'ĐÃ TẤT TOÁN': return 'text-emerald-500';
       case 'BỊ TỪ CHỐI': return 'text-rose-500';
+      case 'CỘNG DỒN': return 'text-slate-400';
       default: return 'text-gray-400';
     }
   };
@@ -142,16 +145,18 @@ const Dashboard: React.FC<DashboardProps> = React.memo(({
   const itemsPerPage = 5;
 
   const sortedLoans = useMemo(() => {
-    return [...loans].sort((a, b) => {
-      const aIsSettled = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(a.status);
-      const bIsSettled = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(b.status);
-      
-      if (aIsSettled !== bIsSettled) {
-        return aIsSettled ? 1 : -1;
-      }
-      
-      return (b.updatedAt || 0) - (a.updatedAt || 0);
-    });
+    return loans
+      .filter(l => l.status !== 'ĐÃ CỘNG DỒN')
+      .sort((a, b) => {
+        const aIsSettled = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(a.status);
+        const bIsSettled = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(b.status);
+        
+        if (aIsSettled !== bIsSettled) {
+          return aIsSettled ? 1 : -1;
+        }
+        
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
   }, [loans]);
 
   const totalPages = Math.ceil(sortedLoans.length / itemsPerPage);

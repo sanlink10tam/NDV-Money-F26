@@ -37,6 +37,7 @@ const AdminLoanApproval: React.FC<AdminLoanApprovalProps> = ({ loans, isGlobalPr
   const groupedLoans: Record<string, { name: string; loans: LoanRecord[] }> = {};
   
   loans.forEach(loan => {
+    if (loan.status === 'ĐÃ CỘNG DỒN') return; // Hide consolidated loans from approval view
     const uid = loan.userId || 'unknown';
     if (!groupedLoans[uid]) {
       groupedLoans[uid] = { name: loan.userName || 'ẨN DANH', loans: [] };

@@ -142,7 +142,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = React.memo(({
   // Financial Statistics
   const { totalDisbursed, totalCollected, activeDebt, collectionRate } = useMemo(() => {
     const activeStatuses = ['ĐANG NỢ', 'QUÁ HẠN', 'CHỜ TẤT TOÁN', 'ĐANG ĐỐI SOÁT'];
-    const disbursed = loans.filter(l => l.status !== 'BỊ TỪ CHỐI' && l.status !== 'CHỜ DUYỆT').reduce((acc, curr) => acc + curr.amount, 0);
+    const disbursed = loans.filter(l => l.status !== 'BỊ TỪ CHỐI' && l.status !== 'CHỜ DUYỆT' && l.status !== 'ĐÃ CỘNG DỒN').reduce((acc, curr) => acc + curr.amount, 0);
     const collected = settledLoans.reduce((acc, curr) => acc + curr.amount, 0);
     const debt = loans
       ? loans.filter((l: any) => activeStatuses.includes(l.status)).reduce((sum: number, l: any) => sum + Number(l.amount || 0), 0)

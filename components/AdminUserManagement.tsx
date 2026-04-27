@@ -321,7 +321,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
           const notificationCount = getUserNotificationCount(u.id);
           const isExpanded = expandedUserId === u.id;
           const userLoans = [...loans]
-            .filter(l => l.userId === u.id)
+            .filter(l => l.userId === u.id && l.status !== 'ĐÃ CỘNG DỒN')
             .sort((a, b) => {
               // Status priority mapping (lower number = higher priority)
               const getPriority = (status: string) => {

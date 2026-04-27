@@ -235,13 +235,15 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
   const itemsPerPage = 5;
 
   const sortedLoans = useMemo(() => {
-    return [...loans].sort((a, b) => {
-      const aIsInactive = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(a.status);
-      const bIsInactive = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(b.status);
-      if (aIsInactive !== bIsInactive) return aIsInactive ? 1 : -1;
-      return (b.updatedAt || 0) - (a.updatedAt || 0);
-    });
-  }, [loans]);
+    return loans
+      .filter(l => l.userId === user?.id && l.status !== 'ĐÃ CỘNG DỒN')
+      .sort((a, b) => {
+        const aIsInactive = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(a.status);
+        const bIsInactive = ['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(b.status);
+        if (aIsInactive !== bIsInactive) return aIsInactive ? 1 : -1;
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
+  }, [loans, user?.id]);
 
   const totalPages = Math.ceil(sortedLoans.length / itemsPerPage);
   const displayedLoans = sortedLoans.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -339,6 +341,7 @@ const LoanApplication: React.FC<LoanApplicationProps> = ({ user, loans, systemBu
       case 'ĐANG ĐỐI SOÁT': return 'text-purple-400';
       case 'ĐÃ TẤT TOÁN': return 'text-emerald-500';
       case 'BỊ TỪ CHỐI': return 'text-rose-500';
+      case 'ĐÃ CỘNG DỒN': return 'text-slate-400';
       default: return 'text-gray-400';
     }
   };

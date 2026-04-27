@@ -2139,11 +2139,36 @@ router.post("/loans", async (req: any, res) => {
       return res.status(400).json({ error: "Dữ liệu phải là một mảng" });
     }
 
-    // Security check: If not admin, can only update own loans
+    // Security check: If not admin, check for overdue loans and ensure they only update own data
     if (!req.user?.isAdmin) {
       const otherLoan = incomingLoans.find(l => l.userId !== req.user.id);
       if (otherLoan) {
         return res.status(403).json({ error: "Bạn không có quyền cập nhật khoản vay của người khác" });
+      }
+
+      // Check for overdue loans if this is a NEW loan application
+      const isNewLoan = incomingLoans.some(l => !l.status || l.status === 'CHỜ DUYỆT');
+      if (isNewLoan) {
+        const { data: userLoans } = await client.from('loans').select('status, date').eq('userId', req.user.id);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const hasOverdue = userLoans?.some(l => {
+          if (l.status === 'QUÁ HẠN' || l.status === 'OVERDUE') return true;
+          if (['ĐANG NỢ', 'CHỜ TẤT TOÁN'].includes(l.status) && l.date) {
+            const parts = l.date.split('/');
+            if (parts.length === 3) {
+              const [d, m, y] = parts.map(Number);
+              const dueDate = new Date(y, m - 1, d);
+              return dueDate < today;
+            }
+          }
+          return false;
+        });
+
+        if (hasOverdue) {
+          return res.status(400).json({ error: "Bạn đang có khoản vay quá hạn. Vui lòng tất toán trước khi đăng ký mới." });
+        }
       }
     }
 
@@ -2205,6 +2230,77 @@ router.post("/loans", async (req: any, res) => {
             error: "Hệ thống bảo trì", 
             message: "Hệ thống đang bảo trì nguồn vốn (vốn còn lại dưới 1 triệu). Vui lòng quay lại sau." 
           });
+        }
+      }
+    }
+
+    // Consolidation Logic: If admin is disbursing a loan, check if user already has an active loan
+    if (req.user?.isAdmin) {
+      for (let i = 0; i < sanitizedLoans.length; i++) {
+        const loan = sanitizedLoans[i];
+        if (loan.status === 'ĐANG NỢ') {
+          // Check for existing active loan (DISBURSED or OVERDUE) for this user
+          // Important: Status names must match exactly what's used in the DB
+          const { data: existingActiveLoans } = await client
+            .from('loans')
+            .select('*')
+            .eq('userId', loan.userId)
+            .in('status', ['ĐANG NỢ', 'QUÁ HẠN'])
+            .neq('id', loan.id) // Don't match the current loan
+            .limit(1);
+
+          if (existingActiveLoans && existingActiveLoans.length > 0) {
+            const primaryLoan = existingActiveLoans[0];
+            
+            // CONSOLIDATE: Update primary loan amount and due date
+            const newTotalAmount = Number(primaryLoan.amount || 0) + Number(loan.amount || 0);
+            
+            // Use the new loan's dueDate as the consolidated dueDate 
+            // since that represents the terms of the most recent credit extension
+            await client.from('loans').update({
+              amount: newTotalAmount,
+              date: loan.date,
+              updatedAt: Date.now()
+            }).eq('id', primaryLoan.id);
+
+            // Change current loan status to 'CONSOLIDATED'
+            // This hides it from main debt view but keeps the record
+            loan.status = 'ĐÃ CỘNG DỒN'; 
+            loan.consolidatedInto = primaryLoan.id;
+
+            // Notify User about Consolidation
+            const io = req.app.get("io");
+            if (io) {
+              const notifId = `NOTIF-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+              const message = `Yêu cầu vay ${Number(loan.amount).toLocaleString()} đ của bạn đã được duyệt và CỘNG DỒN vào khoản vay hiện tại (${primaryLoan.id}). Tổng dư nợ mới là ${newTotalAmount.toLocaleString()} đ.`;
+              
+              await client.from('notifications').insert([{
+                id: notifId,
+                userId: loan.userId,
+                title: 'Khoản vay đã cộng dồn',
+                message: message,
+                time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString('vi-VN'),
+                read: false,
+                type: 'LOAN'
+              }]);
+              
+              io.to(`user_${loan.userId}`).emit("notification_updated", {
+                id: notifId,
+                userId: loan.userId,
+                title: 'Khoản vay đã cộng dồn',
+                message: message,
+                type: 'LOAN'
+              });
+
+              // Also sync the primary loan update to the user
+              io.to(`user_${loan.userId}`).emit("loan_updated", {
+                ...primaryLoan,
+                amount: newTotalAmount,
+                date: loan.date,
+                updatedAt: Date.now()
+              });
+            }
+          }
         }
       }
     }
@@ -2421,6 +2517,8 @@ router.post("/loan/delete", async (req: any, res) => {
       const { data: relatedLogs } = await client.from('budget_logs').select('*').ilike('note', `%${loanId}%`);
       
       let budgetDelta = 0;
+      let loanProfitDelta = 0;
+
       if (relatedLogs && relatedLogs.length > 0) {
         for (const log of relatedLogs) {
           switch (log.type) {
@@ -2428,16 +2526,23 @@ router.post("/loan/delete", async (req: any, res) => {
               budgetDelta += log.amount; // Add back disbursed amount
               break;
             case 'LOAN_REPAY':
-              budgetDelta -= log.amount; // Subtract repaid amount
+              budgetDelta -= log.amount; // Subtract repaid amount from budget
+              // Reverse profit: repayment amount - loan principal
+              if (log.amount > loan.amount) {
+                loanProfitDelta -= (log.amount - loan.amount);
+              }
               break;
           }
         }
       }
 
-      if (budgetDelta !== 0) {
+      if (budgetDelta !== 0 || loanProfitDelta !== 0) {
         const settings = await getMergedSettings(client);
-        const currentBudget = Number(settings.SYSTEM_BUDGET || 0);
-        await saveSystemSettings(client, { SYSTEM_BUDGET: currentBudget + budgetDelta });
+        const updates: any = {};
+        if (budgetDelta !== 0) updates.SYSTEM_BUDGET = Number(settings.SYSTEM_BUDGET || 0) + budgetDelta;
+        if (loanProfitDelta !== 0) updates.TOTAL_LOAN_PROFIT = Math.max(0, Number(settings.TOTAL_LOAN_PROFIT || 0) + loanProfitDelta);
+        
+        await saveSystemSettings(client, updates);
         
         // Also delete these logs so they don't stay orphaned and misleading
         await client.from('budget_logs').delete().ilike('note', `%${loanId}%`);
@@ -2479,47 +2584,91 @@ router.post("/budget-log/delete", async (req: any, res) => {
     let currentBudget = Number(settings.SYSTEM_BUDGET || 0);
     let loanProfit = Number(settings.TOTAL_LOAN_PROFIT || 0);
 
-    // 3. Determine reversal impact
+    // 3. Determine reversal impact and cascade effects
     // Log types: 'INITIAL' | 'ADD' | 'WITHDRAW' | 'LOAN_DISBURSE' | 'LOAN_REPAY' | 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT'
     let budgetDelta = 0;
-    let profitDelta = 0;
+    let loanProfitDelta = 0;
+    let rankProfitDelta = 0;
+    
+    // Extract entity identifiers from note
+    const loanMatch = log.note.match(/L-[a-zA-Z0-9]+/);
+    const loanId = loanMatch ? loanMatch[0] : null;
+    
+    // For rank upgrades: [Tự động] PayOS: Nâng hạng {RANK} cho {USER}
+    const rankMatch = log.note.match(/Nâng hạng (.*?) cho (.*)/);
+    const upgradedRank = rankMatch ? rankMatch[1].trim() : null;
+    const userIdentifier = rankMatch ? rankMatch[2].trim() : null;
 
     switch (log.type) {
       case 'INITIAL':
       case 'ADD':
       case 'ADJUSTMENT_IN':
-        // Deleting an inflow: Subtract from budget
         budgetDelta = -log.amount;
         break;
       case 'WITHDRAW':
       case 'ADJUSTMENT_OUT':
-        // Deleting an outflow: Add back to budget
         budgetDelta = log.amount;
         break;
       case 'LOAN_DISBURSE':
-        // Deleting disbursement: Add back to budget
         budgetDelta = log.amount;
-        // Also potentially reverse loan profit if fee was included?
-        // In DISBURSE handler: profitAmount = loan.amount * feePercent
-        // But the log.amount is (loan.amount * (1 - feePercent))
-        // The fee stays in the budget. So reversing the disburse log only adds back the net disburse amount.
+        // User wants the loan deleted if disbursement log is deleted
+        if (loanId) {
+          await client.from('loans').delete().eq('id', loanId);
+        }
         break;
       case 'LOAN_REPAY':
-        // Deleting repayment: Subtract from budget
         budgetDelta = -log.amount;
-        // Repayment often comes with profit. 
-        // This is tricky because we don't store EXACTLY how much of LOAN_REPAY was profit in the log itself.
-        // However, usually LOAN_REPAY = Principal + Fine.
+        if (loanId) {
+          // Find the loan and re-open it
+          const { data: loan } = await client.from('loans').select('*').eq('id', loanId).single();
+          if (loan) {
+            // Restore loan to a state where it's still active
+            const isOverdue = new Date(loan.dueDate) < new Date();
+            await client.from('loans').update({ status: isOverdue ? 'OVERDUE' : 'DISBURSED' }).eq('id', loanId);
+            
+            // Revert profit estimate if any
+            // profitAmount = (loan.amount * feePercent + fine)
+            // It's hard to be exact, but we can subtract the amount that exceeded principal
+            if (log.amount > loan.amount) {
+              loanProfitDelta = -(log.amount - loan.amount);
+            }
+          }
+        }
         break;
     }
 
-    // 4. Perform updates
-    const updates: any = {
-      SYSTEM_BUDGET: currentBudget + budgetDelta
-    };
+    // Handle Rank Upgrade Reversal
+    if (upgradedRank && userIdentifier) {
+      // Deleting a rank upgrade log
+      rankProfitDelta = -log.amount;
+      budgetDelta = -log.amount;
+      
+      // Try to find user and revert rank
+      // This is best effort. Usually users table has the rank.
+      const { data: user } = await client.from('users').select('*')
+        .or(`phone.eq.${userIdentifier},fullName.eq.${userIdentifier}`)
+        .single();
+      
+      if (user) {
+        // Simple reversal: downgrade to previous rank if possible, or just set to BẠC if it was VÀNG, etc.
+        const ranks = ['ĐỒNG', 'BẠC', 'VÀNG', 'KIM CƯƠNG'];
+        const currentIdx = ranks.indexOf(user.rank || 'ĐỒNG');
+        if (currentIdx > 0) {
+          await client.from('users').update({ rank: ranks[currentIdx - 1] }).eq('id', user.id);
+        }
+      }
+    }
 
-    const saved = await saveSystemSettings(client, updates);
-    if (!saved) throw new Error("Không thể cập nhật cấu hình hệ thống");
+    // 4. Perform updates to system stats
+    const updates: any = {};
+    if (budgetDelta !== 0) updates.SYSTEM_BUDGET = Number(settings.SYSTEM_BUDGET || 0) + budgetDelta;
+    if (loanProfitDelta !== 0) updates.TOTAL_LOAN_PROFIT = Math.max(0, Number(settings.TOTAL_LOAN_PROFIT || 0) + loanProfitDelta);
+    if (rankProfitDelta !== 0) updates.TOTAL_RANK_PROFIT = Math.max(0, Number(settings.TOTAL_RANK_PROFIT || 0) + rankProfitDelta);
+
+    if (Object.keys(updates).length > 0) {
+      const saved = await saveSystemSettings(client, updates);
+      if (!saved) throw new Error("Không thể cập nhật cấu hình hệ thống");
+    }
 
     // 5. Delete the log
     const { error: deleteError } = await client.from('budget_logs').delete().eq('id', logId);
@@ -2531,7 +2680,9 @@ router.post("/budget-log/delete", async (req: any, res) => {
 
     sendSafeJson(res, { 
       success: true, 
-      newBudget: currentBudget + budgetDelta 
+      newBudget: updates.SYSTEM_BUDGET,
+      newLoanProfit: updates.TOTAL_LOAN_PROFIT,
+      newRankProfit: updates.TOTAL_RANK_PROFIT
     });
   } catch (e: any) {
     console.error("Lỗi trong /api/budget-log/delete:", e);
@@ -2805,13 +2956,13 @@ const LOAN_COLUMNS = [
   'id', 'userId', 'userName', 'amount', 'date', 'createdAt', 'status', 
   'fine', 'billImage', 'bankTransactionId', 'signature', 'loanPurpose', 'rejectionReason', 
   'settlementType', 'partialAmount', 'voucherId', 'settledAt', 'principalPaymentCount', 'extensionCount', 'partialPaymentCount',
-  'originalBaseId', 'payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt', 'updatedAt'
+  'originalBaseId', 'payosOrderCode', 'payosCheckoutUrl', 'payosAmount', 'payosExpireAt', 'consolidatedInto', 'updatedAt'
 ];
 
 const LOAN_SUMMARY_COLUMNS = [
   'id', 'userId', 'userName', 'amount', 'date', 'createdAt', 'status', 
   'fine', 'billImage', 'bankTransactionId', 'rejectionReason', 'loanPurpose',
-  'settlementType', 'partialAmount', 'voucherId', 'settledAt', 'principalPaymentCount', 'extensionCount', 'partialPaymentCount', 'originalBaseId', 'signature', 'updatedAt'
+  'settlementType', 'partialAmount', 'voucherId', 'settledAt', 'principalPaymentCount', 'extensionCount', 'partialPaymentCount', 'originalBaseId', 'signature', 'consolidatedInto', 'updatedAt'
 ];
 
 const NOTIFICATION_COLUMNS = [
