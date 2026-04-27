@@ -70,12 +70,13 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
 
   const [filterPendingOnly, setFilterPendingOnly] = useState(false);
+  const [sortOrder, setSortOrder] = useState<'NONE' | 'LOAN_ASC' | 'LOAN_DESC'>('NONE');
   const [zoomImage, setZoomImage] = useState<string | null>(null);
 
   // Reset to page 1 when searching or changing filters
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterPendingOnly]);
+  }, [searchTerm, filterPendingOnly, sortOrder]);
 
   const [showAllLoansAdmin, setShowAllLoansAdmin] = useState<Record<string, boolean>>({});
   const [selectedContract, setSelectedContract] = useState<{ loan: LoanRecord, owner: UserType } | null>(null);
@@ -152,6 +153,14 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
     return Math.max(user?.updatedAt || 0, ...loanUpdates, 0);
   }, [users, loans]);
 
+  const getUserLoanValue = useCallback((userId: string) => {
+    const userLoans = loans.filter(l => 
+      l.userId === userId && 
+      ['ĐANG NỢ', 'CHỜ DUYỆT', 'ĐÃ DUYỆT', 'ĐANG GIẢI NGÂN', 'CHỜ TẤT TOÁN', 'ĐANG ĐỐI SOÁT'].includes(l.status)
+    );
+    return userLoans.reduce((sum, l) => sum + l.amount, 0);
+  }, [loans]);
+
   const filteredUsers = useMemo(() => {
     return users.filter(u => {
       const matchesSearch = u.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -162,7 +171,18 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
       if (filterPendingOnly) return getUserNotificationCount(u.id) > 0;
       return true;
     }).sort((a, b) => {
-      // 1. Priority by notification count (including loans needing action)
+      // 1. If sorting by loan value explicitly
+      if (sortOrder === 'LOAN_ASC') {
+        const valA = getUserLoanValue(a.id);
+        const valB = getUserLoanValue(b.id);
+        if (valA !== valB) return valA - valB;
+      } else if (sortOrder === 'LOAN_DESC') {
+        const valA = getUserLoanValue(a.id);
+        const valB = getUserLoanValue(b.id);
+        if (valA !== valB) return valB - valA;
+      }
+
+      // 2. Priority by notification count (including loans needing action)
       const countA = getUserNotificationCount(a.id);
       const countB = getUserNotificationCount(b.id);
       if (countA !== countB) return countB - countA;
@@ -175,7 +195,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
       // 4. Fallback to name
       return a.fullName.localeCompare(b.fullName);
     });
-  }, [users, searchTerm, filterPendingOnly, expandedUserId, getUserNotificationCount, getLatestActivity]);
+  }, [users, searchTerm, filterPendingOnly, sortOrder, getUserNotificationCount, getLatestActivity, getUserLoanValue]);
 
   const itemsPerPage = 5;
   const totalPages = useMemo(() => Math.ceil(filteredUsers.length / itemsPerPage), [filteredUsers.length, itemsPerPage]);
@@ -291,29 +311,55 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
         </div>
       </div>
 
-      <div className="relative mb-6 flex gap-2 shrink-0">
-        <div className="relative flex-1">
-          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600">
+      <div className="relative mb-6 shrink-0">
+        <div className="relative flex items-center bg-[#111111] border border-white/5 rounded-2xl focus-within:border-white/20 transition-all p-1">
+          <div className="absolute left-4 text-gray-600 pointer-events-none">
             <Search size={18} />
           </div>
           <input 
-            type="text"
-            placeholder="Tìm Tên, Số Zalo hoặc ID..."
+            type="text" 
+            placeholder="Tìm Tên, Số Zalo hoặc ID..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-[#111111] border border-white/5 rounded-2xl py-4 pl-12 pr-5 text-xs font-bold text-white placeholder-gray-600 focus:outline-none focus:border-white/20 transition-all"
+            className="flex-1 bg-transparent py-4 pl-12 pr-4 text-xs font-bold text-white placeholder-gray-600 focus:outline-none"
           />
+          
+          <div className="flex items-center gap-1.5 pr-1">
+            <div className="flex bg-black/40 rounded-xl overflow-hidden p-0.5 border border-white/5">
+              <button 
+                onClick={() => setSortOrder(sortOrder === 'LOAN_DESC' ? 'NONE' : 'LOAN_DESC')}
+                title="Giá trị cao nhất"
+                className={`w-10 h-10 flex items-center justify-center transition-all rounded-lg ${sortOrder === 'LOAN_DESC' ? 'bg-[#ff8c00] text-black shadow-[0_0_15px_rgba(255,140,0,0.3)]' : 'text-gray-500 hover:text-white font-medium'}`}
+              >
+                <div className="flex flex-col items-center">
+                  <ChevronDown size={18} />
+                  <span className="text-[6px] font-black uppercase tracking-tighter mt-[-4px]">MAX</span>
+                </div>
+              </button>
+              <button 
+                onClick={() => setSortOrder(sortOrder === 'LOAN_ASC' ? 'NONE' : 'LOAN_ASC')}
+                title="Giá trị thấp nhất"
+                className={`w-10 h-10 flex items-center justify-center transition-all rounded-lg ${sortOrder === 'LOAN_ASC' ? 'bg-[#ff8c00] text-black shadow-[0_0_15px_rgba(255,140,0,0.3)]' : 'text-gray-500 hover:text-white font-medium'}`}
+              >
+                <div className="flex flex-col items-center">
+                  <ChevronUp size={18} />
+                  <span className="text-[6px] font-black uppercase tracking-tighter mt-[-4px]">MIN</span>
+                </div>
+              </button>
+            </div>
+
+            <button 
+              onClick={() => setFilterPendingOnly(!filterPendingOnly)}
+              title="Chờ duyệt"
+              className={`w-10 h-10 rounded-xl transition-all flex items-center justify-center relative border ${filterPendingOnly ? 'bg-[#ff8c00] border-[#ff8c00] text-black shadow-[0_0_15px_rgba(255,140,0,0.3)]' : 'bg-black/40 border-white/5 text-gray-500'}`}
+            >
+              <Clock size={18} />
+              {users.filter(u => getUserNotificationCount(u.id) > 0).length > 0 && !filterPendingOnly && (
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-[#111111] animate-pulse"></div>
+              )}
+            </button>
+          </div>
         </div>
-        <button 
-          onClick={() => setFilterPendingOnly(!filterPendingOnly)}
-          className={`px-4 rounded-2xl border transition-all flex items-center gap-2 ${filterPendingOnly ? 'bg-[#ff8c00] border-[#ff8c00] text-black' : 'bg-[#111111] border-white/5 text-gray-500'}`}
-        >
-          <Clock size={18} />
-          <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Chờ duyệt</span>
-          {users.filter(u => getUserNotificationCount(u.id) > 0).length > 0 && !filterPendingOnly && (
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-          )}
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-3">
