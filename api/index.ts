@@ -2298,14 +2298,12 @@ router.post("/loans", async (req: any, res) => {
           if (existingActiveLoans && existingActiveLoans.length > 0) {
             const primaryLoan = existingActiveLoans[0];
             
-            // CONSOLIDATE: Update primary loan amount and due date
+            // CONSOLIDATE: Update primary loan amount (Keep original due date)
             const newTotalAmount = Number(primaryLoan.amount || 0) + Number(loan.amount || 0);
             
-            // Use the new loan's dueDate as the consolidated dueDate 
-            // since that represents the terms of the most recent credit extension
+            // We no longer update 'date: loan.date' to keep the original deadline
             await client.from('loans').update({
               amount: newTotalAmount,
-              date: loan.date,
               updatedAt: Date.now()
             }).eq('id', primaryLoan.id);
 
@@ -2342,7 +2340,6 @@ router.post("/loans", async (req: any, res) => {
               io.to(`user_${loan.userId}`).emit("loan_updated", {
                 ...primaryLoan,
                 amount: newTotalAmount,
-                date: loan.date,
                 updatedAt: Date.now()
               });
             }
