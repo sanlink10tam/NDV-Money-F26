@@ -2307,6 +2307,25 @@ router.post("/loans", async (req: any, res) => {
               updatedAt: Date.now()
             }).eq('id', primaryLoan.id);
 
+            // Update the primary loan if it exists in the current sync payload to prevent overwriting
+            const primaryInSync = sanitizedLoans.find(l => l.id === primaryLoan.id);
+            if (primaryInSync) {
+              primaryInSync.amount = newTotalAmount;
+              primaryInSync.updatedAt = Date.now();
+            }
+
+            // Also update User Balance in DB
+            const { data: userData } = await client.from('users').select('balance, totalLimit').eq('id', loan.userId).single();
+            if (userData) {
+              const newBalance = Math.max(0, (userData.balance || 0) - loan.amount);
+              await client.from('users').update({ balance: newBalance, updatedAt: Date.now() }).eq('id', loan.userId);
+              
+              const io = req.app.get("io");
+              if (io) {
+                io.to(`user_${loan.userId}`).emit("user_updated", { id: loan.userId, balance: newBalance });
+              }
+            }
+
             // Change current loan status to 'CONSOLIDATED'
             // This hides it from main debt view but keeps the record
             loan.status = 'ĐÃ CỘNG DỒN'; 
@@ -2656,6 +2675,21 @@ router.post("/budget-log/delete", async (req: any, res) => {
         budgetDelta = log.amount;
         // User wants the loan deleted if disbursement log is deleted
         if (loanId) {
+          const { data: loan } = await client.from('loans').select('userId, amount').eq('id', loanId).single();
+          if (loan) {
+            // Restore user balance
+            const { data: user } = await client.from('users').select('balance').eq('id', loan.userId).single();
+            if (user) {
+              const newBalance = (user.balance || 0) + loan.amount;
+              await client.from('users').update({ balance: newBalance, updatedAt: Date.now() }).eq('id', loan.userId);
+              
+              const io = req.app.get("io");
+              if (io) {
+                io.to(`user_${loan.userId}`).emit("user_updated", { id: loan.userId, balance: newBalance });
+                io.to(`user_${loan.userId}`).emit("loan_deleted", { id: loanId });
+              }
+            }
+          }
           await client.from('loans').delete().eq('id', loanId);
         }
         break;
@@ -2665,15 +2699,42 @@ router.post("/budget-log/delete", async (req: any, res) => {
           // Find the loan and re-open it
           const { data: loan } = await client.from('loans').select('*').eq('id', loanId).single();
           if (loan) {
+            // Re-deduct from user balance (because repayment had added it back)
+            const { data: user } = await client.from('users').select('balance').eq('id', loan.userId).single();
+            if (user) {
+              const newBalance = Math.max(0, (user.balance || 0) - loan.amount);
+              await client.from('users').update({ balance: newBalance, updatedAt: Date.now() }).eq('id', loan.userId);
+              
+              const io = req.app.get("io");
+              if (io) {
+                io.to(`user_${loan.userId}`).emit("user_updated", { id: loan.userId, balance: newBalance });
+              }
+            }
+
             // Restore loan to a state where it's still active
-            const isOverdue = new Date(loan.dueDate) < new Date();
-            await client.from('loans').update({ status: isOverdue ? 'OVERDUE' : 'DISBURSED' }).eq('id', loanId);
+            let isOverdue = false;
+            if (loan.date && typeof loan.date === 'string') {
+              const [d, m, y] = loan.date.split('/').map(Number);
+              if (d && m && y) {
+                const dueDate = new Date(y, m - 1, d);
+                dueDate.setHours(23, 59, 59, 999);
+                isOverdue = new Date() > dueDate;
+              }
+            }
+            await client.from('loans').update({ status: isOverdue ? 'QUÁ HẠN' : 'ĐANG NỢ', updatedAt: Date.now() }).eq('id', loanId);
             
             // Revert profit estimate if any
-            // profitAmount = (loan.amount * feePercent + fine)
-            // It's hard to be exact, but we can subtract the amount that exceeded principal
             if (log.amount > loan.amount) {
               loanProfitDelta = -(log.amount - loan.amount);
+            }
+
+            const io = req.app.get("io");
+            if (io) {
+              io.to(`user_${loan.userId}`).emit("loan_updated", { 
+                ...loan, 
+                status: isOverdue ? 'QUÁ HẠN' : 'ĐANG NỢ',
+                updatedAt: Date.now()
+              });
             }
           }
         }
@@ -3142,6 +3203,75 @@ router.post("/sync", async (req: any, res) => {
     
     // 4. Update Loans
     if (loans && Array.isArray(loans) && loans.length > 0) {
+      // CONSOLIDATION LOGIC: If a loan is being updated to 'ĐANG NỢ' (Disbursed),
+      // we check if the user already has an active or overdue loan to merge into.
+      if (isAdmin) {
+        for (let i = 0; i < loans.length; i++) {
+          const loan = loans[i];
+          if (loan.status === 'ĐANG NỢ') {
+            const { data: existingActiveLoans } = await client
+              .from('loans')
+              .select('*')
+              .eq('userId', loan.userId)
+              .in('status', ['ĐANG NỢ', 'QUÁ HẠN'])
+              .neq('id', loan.id)
+              .limit(1);
+
+            if (existingActiveLoans && existingActiveLoans.length > 0) {
+              const primaryLoan = existingActiveLoans[0];
+              // Use current amount from payload if available for most up-to-date calculation, otherwise use DB
+              const primaryInSync = (loans as any[]).find(l => l.id === primaryLoan.id);
+              const baseAmount = primaryInSync ? Number(primaryInSync.amount || 0) : Number(primaryLoan.amount || 0);
+              
+              const consolidatedAmount = Number(loan.amount || 0);
+              
+              // Only update if there's a real mismatch between DB+incremental and what we expect
+              const expectedAmount = Number(primaryLoan.amount || 0) + consolidatedAmount;
+              
+              if (baseAmount < expectedAmount) {
+                await client.from('loans').update({
+                  amount: expectedAmount,
+                  updatedAt: Date.now()
+                }).eq('id', primaryLoan.id);
+                
+                if (primaryInSync) {
+                  primaryInSync.amount = expectedAmount;
+                  primaryInSync.updatedAt = Date.now();
+                }
+              }
+
+              // 2. Mark this loan as consolidated in the payload
+              loan.status = 'ĐÃ CỘNG DỒN';
+              loan.consolidatedInto = primaryLoan.id;
+
+              // 4. Update User Balance in DB and Payload
+              const { data: userData } = await client.from('users').select('balance').eq('id', loan.userId).single();
+              if (userData) {
+                // If this is a NEW disbursement that hasn't affected balance yet
+                // (Note: Usually disburse logic in App.tsx already deducted from balance, 
+                // but we must be sure the server and client are in sync)
+                const newBalance = Math.max(0, (userData.balance || 0) - consolidatedAmount);
+                await client.from('users').update({ balance: newBalance, updatedAt: Date.now() }).eq('id', loan.userId);
+                
+                // Update User in payload if present
+                if (users && Array.isArray(users)) {
+                  const userInPayload = users.find((u: any) => u.id === loan.userId);
+                  if (userInPayload) {
+                    userInPayload.balance = newBalance;
+                    userInPayload.updatedAt = Date.now();
+                  }
+                }
+
+                const io = req.app.get("io");
+                if (io) {
+                  io.to(`user_${loan.userId}`).emit("user_updated", { id: loan.userId, balance: newBalance });
+                }
+              }
+            }
+          }
+        }
+      }
+
       const sanitizedLoans = sanitizeData(loans, LOAN_COLUMNS);
       if (sanitizedLoans.length > 0) {
         const { error } = await client.from('loans').upsert(sanitizedLoans, { onConflict: 'id' });

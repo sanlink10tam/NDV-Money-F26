@@ -1047,6 +1047,15 @@ const App: React.FC = () => {
       });
     });
 
+    socket.on('loan_deleted', (data: { id: string }) => {
+      console.log('[REALTIME] Loan deleted:', data.id);
+      setLoans(prev => {
+        const next = prev.filter(l => l.id !== data.id);
+        localStorage.setItem('ndv_loans', JSON.stringify(next));
+        return next;
+      });
+    });
+
     socket.on('loans_updated', (updatedLoans: LoanRecord[]) => {
       console.log('[REALTIME] Multiple loans updated');
       setLoans(prev => {
@@ -2270,6 +2279,26 @@ const App: React.FC = () => {
         }
       }
 
+      // Optimistic Consolidation for Disbursement
+      let primaryLoanInSync: LoanRecord | null = null;
+      if (action === 'DISBURSE') {
+        const existingActiveLoan = newLoans.find(l => 
+          l.id !== loan.id && 
+          l.userId === loan.userId && 
+          (l.status === 'ĐANG NỢ' || l.status === 'QUÁ HẠN')
+        );
+        if (existingActiveLoan) {
+          // Merge this loan into the existing one
+          existingActiveLoan.amount += loan.amount;
+          existingActiveLoan.updatedAt = Date.now();
+          primaryLoanInSync = existingActiveLoan;
+          
+          // Mark current loan as consolidated
+          newStatus = 'ĐÃ CỘNG DỒN';
+          (loan as any).consolidatedInto = existingActiveLoan.id;
+        }
+      }
+
       // Logic tính chu kỳ tiếp theo cho Vay Gốc & TTMP: Cộng thêm 1 tháng (đến ngày 1 tháng sau)
       let newDueDate = loan.date;
       if (action === 'SETTLE' && (loan.settlementType === 'PRINCIPAL' || loan.settlementType === 'PARTIAL') && loan.date && typeof loan.date === 'string') {
@@ -2505,7 +2534,9 @@ const App: React.FC = () => {
       }
 
       // Persist to server using sync endpoint - Targeted sync for bandwidth
-      const syncLoans = nextLoan ? [updatedLoan, nextLoan] : [updatedLoan];
+      const syncLoans = [updatedLoan];
+      if (nextLoan) syncLoans.push(nextLoan);
+      if (primaryLoanInSync) syncLoans.push(primaryLoanInSync);
       
       // Calculate final budget safely using functional update pattern
       const calculatedBudget = systemBudget + budgetDelta;
@@ -3409,20 +3440,20 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSystemRefresh = async (targetView: AppView = AppView.LOGIN) => {
+  const handleSystemRefresh = async (targetView?: AppView) => {
     setIsGlobalProcessing(true);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     
     try {
-      // Clear local storage if logging out
+      // ONLY clear storage if EXPLICITLY requested
       if (targetView === AppView.LOGIN) {
         localStorage.removeItem('ndv_user_id');
         setUser(null);
-        setRegisteredUsers([]); // Clear users list to prevent stale data on next registration
+        setRegisteredUsers([]); 
       }
       
-      // Force immediate data fetch
+      const realTarget = targetView || currentView;
       const params = new URLSearchParams();
       params.append('checkStorage', 'true');
       params.append('t', Date.now().toString());
@@ -3450,7 +3481,7 @@ const App: React.FC = () => {
       setStorageFull(data.storageFull);
       setStorageUsage(data.storageUsage);
       
-      setCurrentView(targetView);
+      setCurrentView(realTarget);
     } catch (e) {
       console.error("Lỗi làm mới hệ thống:", e);
       // Fallback to reload if everything fails

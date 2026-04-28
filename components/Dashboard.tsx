@@ -59,8 +59,8 @@ const Dashboard: React.FC<DashboardProps> = React.memo(({
     return finalDate.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
   };
 
-  const activeLoans = loans.filter(l => l.status === 'ĐANG ĐỐI SOÁT' || l.status === 'ĐANG NỢ' || l.status === 'ĐANG GIẢI NGÂN' || l.status === 'CHỜ DUYỆT');
-  const earliestLoan = activeLoans.length > 0 ? [...activeLoans].sort((a, b) => {
+  const activeLoans = loans.filter(l => l.status === 'ĐANG ĐỐI SOÁT' || l.status === 'ĐANG NỢ' || l.status === 'ĐANG GIẢI NGÂN' || l.status === 'CHỜ DUYỆT' || l.status === 'QUÁ HẠN');
+  const earliestLoan = activeLoans.length > 0 ? [...activeLoans].filter(l => l.status !== 'ĐÃ CỘNG DỒN').sort((a, b) => {
     if (!a.date || typeof a.date !== 'string' || !b.date || typeof b.date !== 'string') return 0;
     const [da, ma, ya] = a.date.split('/').map(Number);
     const [db, mb, yb] = b.date.split('/').map(Number);
@@ -71,7 +71,7 @@ const Dashboard: React.FC<DashboardProps> = React.memo(({
   const displayDueDate = earliestLoan ? earliestLoan.date : nextDueDate;
 
   const currentDebt = loans
-    .filter(l => l.status === 'ĐANG NỢ' || l.status === 'CHỜ TẤT TOÁN')
+    .filter(l => l.status === 'ĐANG NỢ' || l.status === 'CHỜ TẤT TOÁN' || l.status === 'QUÁ HẠN')
     .reduce((acc, curr) => acc + curr.amount, 0);
 
   const today = new Date();
